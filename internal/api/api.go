@@ -219,6 +219,11 @@ func middlewareAuth(username, password string, localAuth bool, next http.Handler
 	wantAuthHash := sha256.Sum256([]byte("Basic " + credentials))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/onvif/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		if localAuth || !isLoopback(r.RemoteAddr) {
 			gotAuthHash := sha256.Sum256([]byte(r.Header.Get("Authorization")))
 			if subtle.ConstantTimeCompare(gotAuthHash[:], wantAuthHash[:]) != 1 {
