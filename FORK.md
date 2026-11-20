@@ -103,16 +103,12 @@ Tested against one camera, an Eve Outdoor Cam (firmware 1.0.1), on macOS:
   audio-only consumers: tested
 - two-way audio: tested with the `play audio` API (a tone sent as PCMA was
   played by the camera speaker); not yet tested from a WebRTC client
-- proxy rebroadcast: tested with a second go2rtc paired to the proxy as a
-  HomeKit controller, while an NVR was recording: 1080p video, audio, and a
-  tone sent back to the camera speaker all worked; Apple devices not yet
-  confirmed
-- UniFi Protect: adoption by `host:1984` with the ONVIF login works, video and
-  audio play (audio needs `onvif.audio`, the AAC default query, and "Stream
-  Compatibility Mode: Improved" on the camera in Protect); **motion events are
-  not yet confirmed in a real Protect**, only with a scripted client that
-  follows Protect's request sequence
-- a real motion event from the camera's sensor: not observed yet
+- proxy rebroadcast: works with Apple devices (Home app live view and two-way
+  audio) while UniFi Protect records the same camera; needs the AES_256 SRTP
+  support of this branch, because Apple devices select it
+- UniFi Protect 7.x: adoption by `host:1984` with the ONVIF login, video, audio
+  (`onvif.audio`, the AAC default query and "Stream Compatibility Mode:
+  Improved" in Protect), motion events and snapshots work
 
 ## Build
 
