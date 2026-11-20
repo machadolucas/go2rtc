@@ -341,17 +341,23 @@ func (s *server) StartConsumer(consumer *homekit.Consumer) error {
 	}
 
 	if err := stream.AddConsumer(consumer); err != nil {
-		log.Debug().Err(err).Str("stream", s.stream).Msg("[homekit] rebroadcast")
+		log.Warn().Err(err).Str("stream", s.stream).Str("remote", consumer.RemoteAddr).Msg("[homekit] rebroadcast")
 		return err
 	}
 
 	s.AddConn(consumer)
+
+	log.Info().Str("stream", s.stream).Str("remote", consumer.RemoteAddr).
+		Msgf("[homekit] rebroadcast start: %s", strings.ReplaceAll(consumer.SDP, "\n", " | "))
 
 	go func() {
 		_, _ = consumer.WriteTo(nil)
 		stream.RemoveConsumer(consumer)
 
 		s.DelConn(consumer)
+
+		log.Info().Str("stream", s.stream).Str("remote", consumer.RemoteAddr).
+			Int("send", consumer.Send).Int("recv", consumer.Recv).Msg("[homekit] rebroadcast stop")
 	}()
 
 	return nil
