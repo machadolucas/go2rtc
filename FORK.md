@@ -20,6 +20,9 @@ upstream in pieces; nothing has been proposed yet.
 | **ONVIF authentication** (WS-Security UsernameToken) separate from the API password. This is upstream PR [#2231](https://github.com/AlexxIT/go2rtc/pull/2231) by @ssttevee, cherry-picked, plus HTTP 400 on the fault | `pkg/onvif/auth.go` | `onvif.username`, `onvif.password` |
 | **Audio in the ONVIF profiles** (AAC `AudioEncoderConfiguration`, audio sources), opt-in. Without it UniFi Protect treats the camera as having no microphone | `pkg/onvif/server.go` | `onvif.audio` |
 | **HomeKit pairing works with an API password.** `/pair-setup` and `/pair-verify` skip the API Basic auth; HAP has its own pairing and encryption, and Apple devices never send Basic auth | `internal/api/api.go` | none |
+| **Proxy rebroadcast.** A HomeKit camera streams to one or two clients only, and go2rtc is already one. With rebroadcast the Apple Home proxy answers live-view requests itself and sends the stream it already receives (H.264 and AAC-ELD untouched, no transcoding), in both directions for two-way audio. Any number of Apple devices can watch while an NVR records. Controls, events, snapshots and HKSV still go to the camera | `pkg/homekit/proxy_stream.go` | `homekit.<stream>.rebroadcast: true` |
+| **Snapshots with the ONVIF login** (HTTP Digest or Basic) at `/onvif/snapshot.jpeg`, returned by `GetSnapshotUri` when `onvif.username` is set | `pkg/onvif/httpauth.go` | none |
+| **Fixes for the HomeKit source**: audio-only consumers, a consumer that asks for video after the camera was started for audio, chunked responses | `pkg/homekit`, `pkg/hap` | none |
 | **Two-way audio for HomeKit sources.** Clients send PCMA/PCMU/PCM (WebRTC, RTSP backchannel, the `play audio` API); an external encoder turns it into the AAC-ELD the camera expects | `pkg/homekit/backchannel.go`, `examples/homekit_eldenc` | `homekit_client.talk_encoder` |
 
 ## Example config
@@ -45,6 +48,7 @@ streams:
 
 homekit:
   porch:                   # give the camera back to Apple Home (transparent proxy)
+    rebroadcast: true      # live view from go2rtc's stream, not a second camera stream
 
 homekit_client:
   talk_encoder: /usr/local/bin/eldenc 16000 24000  # optional, two-way audio
@@ -99,6 +103,10 @@ Tested against one camera, an Eve Outdoor Cam (firmware 1.0.1), on macOS:
   audio-only consumers: tested
 - two-way audio: tested with the `play audio` API (a tone sent as PCMA was
   played by the camera speaker); not yet tested from a WebRTC client
+- proxy rebroadcast: tested with a second go2rtc paired to the proxy as a
+  HomeKit controller, while an NVR was recording: 1080p video, audio, and a
+  tone sent back to the camera speaker all worked; Apple devices not yet
+  confirmed
 - UniFi Protect: adoption by `host:1984` with the ONVIF login works, video and
   audio play (audio needs `onvif.audio`, the AAC default query, and "Stream
   Compatibility Mode: Improved" on the camera in Protect); **motion events are
