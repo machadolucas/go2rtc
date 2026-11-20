@@ -56,6 +56,9 @@ func Init() {
 	// ONVIF server on all suburls
 	api.HandleFunc("/onvif/", onvifDeviceService)
 
+	// snapshots with the ONVIF auth (API auth doesn't cover the /onvif/ path)
+	api.HandleFunc(pathSnapshot, onvifSnapshot)
+
 	// ONVIF client autodiscovery
 	api.HandleFunc("api/onvif", apiOnvif)
 }
@@ -247,7 +250,12 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 		b = onvif.GetStreamUriResponse(uri)
 
 	case onvif.MediaGetSnapshotUri:
-		uri := "http://" + r.Host + "/api/frame.jpeg?src=" + onvif.FindTagValue(b, "ProfileToken")
+		// clients fetch the snapshot with the ONVIF username and password
+		path := "/api/frame.jpeg"
+		if authUsername != "" {
+			path = pathSnapshot
+		}
+		uri := "http://" + r.Host + path + "?src=" + onvif.FindTagValue(b, "ProfileToken")
 		b = onvif.GetSnapshotUriResponse(uri)
 
 	default:
@@ -369,4 +377,26 @@ func apiMotion(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "wrong state", http.StatusBadRequest)
 	}
+}
+
+const pathSnapshot = "/onvif/snapshot.jpeg"
+
+// onvifSnapshot - the same as api/frame.jpeg, but with the ONVIF username and
+// password (HTTP Digest or Basic) instead of the API auth.
+func onvifSnapshot(w http.ResponseWriter, r *http.Request) {
+	if authUsername != "" && !onvif.CheckHTTPAuth(r, authUsername, authPassword, time.Now()) {
+		onvif.RequireHTTPAuth(w, time.Now())
+		return
+	}
+
+	r2 := r.Clone(r.Context())
+	r2.URL.Path = "/api/frame.jpeg"
+	r2.RequestURI = r2.URL.RequestURI()
+
+	handler, pattern := http.DefaultServeMux.Handler(r2)
+	if pattern == "" {
+		http.Error(w, "snapshots not supported", http.StatusNotFound)
+		return
+	}
+	handler.ServeHTTP(w, r2)
 }
