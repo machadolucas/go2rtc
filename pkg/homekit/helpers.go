@@ -102,6 +102,16 @@ func trackToVideo(track *core.Receiver, video0 *camera.VideoCodecConfiguration, 
 		}
 	}
 
+	if track == nil {
+		// Audio only consumer. The camera rejects a stream config with an
+		// empty resolution, so ask for the smallest one - it will be dropped.
+		for i, s := range video0.VideoAttrs {
+			if i == 0 || int(s.Width)*int(s.Height) < int(attrs.Width)*int(attrs.Height) {
+				attrs = s
+			}
+		}
+	}
+
 	return &camera.VideoCodecConfiguration{
 		CodecType: video0.CodecType,
 		CodecParams: []camera.VideoCodecParameters{
