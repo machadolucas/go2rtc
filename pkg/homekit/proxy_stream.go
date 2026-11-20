@@ -175,6 +175,11 @@ func (p *Proxy) handleStream(req *http.Request) (*http.Response, error) {
 				value = answer
 			case camera.TypeStreamingStatus:
 				value = streamingAvailable()
+			case camera.TypeSelectedStreamConfiguration:
+				// the accessory knows nothing about this session
+				p.mu.Lock()
+				value = p.selected
+				p.mu.Unlock()
 			default:
 				// request with other characteristics - response will be patched
 				return nil, nil
@@ -243,6 +248,10 @@ func (p *Proxy) handleStream(req *http.Request) (*http.Response, error) {
 					return nil, err
 				}
 				p.selectStream(&conf)
+
+				p.mu.Lock()
+				p.selected, _ = char.Value.(string)
+				p.mu.Unlock()
 			}
 		}
 

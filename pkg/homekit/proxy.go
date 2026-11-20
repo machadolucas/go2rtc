@@ -81,6 +81,7 @@ type Proxy struct {
 	streamIDs map[uint64]string // iid => type for SetupEndpoints, SelectedStreamConfiguration, StreamingStatus
 	pending   *Consumer         // after SetupEndpoints, before SelectedStreamConfiguration
 	answer    string            // SetupEndpoints response for the pending consumer
+	selected  string            // last SelectedStreamConfiguration from the controller
 	consumers []*Consumer
 }
 
@@ -145,6 +146,7 @@ func (p *Proxy) handleCon(srv ServerProxy) error {
 			case req.Method == "GET" && req.URL.Path == hap.PathAccessories:
 				body, _ := io.ReadAll(res.Body)
 				body = p.patchAccessories(body)
+				res.TransferEncoding = nil // the body has a known length now
 				res.ContentLength = int64(len(body))
 				res.Body = io.NopCloser(bytes.NewReader(body))
 			case req.Method == "GET" && req.URL.Path == hap.PathCharacteristics:
@@ -152,6 +154,7 @@ func (p *Proxy) handleCon(srv ServerProxy) error {
 				if b := p.patchCharacteristics(body); b != nil {
 					body = b
 				}
+				res.TransferEncoding = nil
 				res.ContentLength = int64(len(body))
 				res.Body = io.NopCloser(bytes.NewReader(body))
 			}

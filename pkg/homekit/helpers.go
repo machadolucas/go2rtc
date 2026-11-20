@@ -104,12 +104,18 @@ func trackToVideo(track *core.Receiver, video0 *camera.VideoCodecConfiguration, 
 
 	if track == nil {
 		// Audio only consumer. The camera rejects a stream config with an
-		// empty resolution, so ask for the smallest one - it will be dropped.
-		for i, s := range video0.VideoAttrs {
-			if i == 0 || int(s.Width)*int(s.Height) < int(attrs.Width)*int(attrs.Height) {
+		// empty resolution. Ask for the best one, because a video consumer
+		// can join this producer later.
+		for _, s := range video0.VideoAttrs {
+			if (maxWidth > 0 && int(s.Width) > maxWidth) || (maxHeight > 0 && int(s.Height) > maxHeight) {
+				continue
+			}
+			if int(s.Width)*int(s.Height) > int(attrs.Width)*int(attrs.Height) {
 				attrs = s
 			}
 		}
+		profileID = core.Max(video0.CodecParams[0].ProfileID)
+		level = core.Max(video0.CodecParams[0].Level)
 	}
 
 	return &camera.VideoCodecConfiguration{

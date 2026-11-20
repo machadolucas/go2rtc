@@ -277,8 +277,15 @@ func (c *Client) GetAccessories() ([]*Accessory, error) {
 		return nil, err
 	}
 
+	// important to read the body to the end - with the chunked encoding the
+	// JSON decoder can leave the last chunk for the next request
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, err
+	}
+
 	var v JSONAccessories
-	if err = json.NewDecoder(res.Body).Decode(&v); err != nil {
+	if err = json.Unmarshal(body, &v); err != nil {
 		return nil, err
 	}
 

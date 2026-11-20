@@ -84,8 +84,13 @@ func (c *Client) ReadCharacters(ids ...[2]uint64) ([]CharValue, error) {
 		return nil, err
 	}
 
+	body, err := io.ReadAll(res.Body) // read to the end, important for chunked
+	if err != nil {
+		return nil, err
+	}
+
 	var v charValues
-	if err = json.NewDecoder(res.Body).Decode(&v); err != nil {
+	if err = json.Unmarshal(body, &v); err != nil {
 		return nil, err
 	}
 	return v.Value, nil
