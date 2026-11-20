@@ -27,7 +27,11 @@ func Init() {
 			CategoryID    string   `yaml:"category_id"`
 			Pairings      []string `yaml:"pairings"`
 		} `yaml:"homekit"`
-		Events map[string]watchConfig `yaml:"homekit_events"`
+		Client struct {
+			// external AAC-ELD encoder for two-way audio, see pkg/homekit/backchannel.go
+			TalkEncoder string                 `yaml:"talk_encoder"`
+			Events      map[string]watchConfig `yaml:"events"`
+		} `yaml:"homekit_client"`
 	}
 	app.LoadConfig(&cfg)
 
@@ -39,7 +43,9 @@ func Init() {
 	api.HandleFunc("api/homekit/accessories", apiHomekitAccessories)
 	api.HandleFunc("api/discovery/homekit", apiDiscovery)
 
-	initWatchers(cfg.Events)
+	talkEncoder = cfg.Client.TalkEncoder
+
+	initWatchers(cfg.Client.Events)
 
 	if cfg.Mod == nil {
 		return
@@ -128,6 +134,7 @@ func Init() {
 }
 
 var log zerolog.Logger
+var talkEncoder string
 var hosts map[string]*server
 var servers map[string]*server
 
@@ -138,6 +145,9 @@ func streamHandler(rawURL string) (core.Producer, error) {
 
 	rawURL, rawQuery, _ := strings.Cut(rawURL, "#")
 	client, err := homekit.Dial(rawURL, srtp.Server)
+	if client != nil {
+		client.TalkCommand = talkEncoder
+	}
 	if client != nil && rawQuery != "" {
 		query := streams.ParseQuery(rawQuery)
 		client.MaxWidth = core.Atoi(query.Get("maxwidth"))

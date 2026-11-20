@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
 	"github.com/AlexxIT/go2rtc/pkg/hap"
 	"github.com/AlexxIT/go2rtc/pkg/hap/camera"
+	"github.com/AlexxIT/go2rtc/pkg/shell"
 	"github.com/AlexxIT/go2rtc/pkg/srtp"
 	"github.com/pion/rtp"
 )
@@ -28,6 +30,12 @@ type Client struct {
 	audioSession *srtp.Session
 
 	stream *camera.Stream
+
+	// TalkCommand is an external AAC-ELD encoder, see backchannel.go
+	TalkCommand string `json:"-"`
+
+	talkMu  sync.Mutex
+	talkCmd *shell.Command
 
 	MaxWidth  int `json:"-"`
 	MaxHeight int `json:"-"`
@@ -123,6 +131,10 @@ func (c *Client) GetMedias() []*core.Media {
 		},
 	}
 
+	if c.TalkCommand != "" {
+		c.Medias = append(c.Medias, talkMedia())
+	}
+
 	return c.Medias
 }
 
@@ -141,8 +153,18 @@ func (c *Client) Start() error {
 	audioTrack := c.trackByKind(core.KindAudio)
 	audioCodec := trackToAudio(audioTrack, &c.audioConfig.Codecs[0])
 
-	c.videoSession = &srtp.Session{Local: c.srtpEndpoint()}
-	c.audioSession = &srtp.Session{Local: c.srtpEndpoint()}
+	videoSession := &srtp.Session{Local: c.srtpEndpoint()}
+	audioSession := &srtp.Session{
+		Local: c.srtpEndpoint(),
+		// for the talkback
+		PayloadType:  talkPayloadType,
+		RTCPInterval: 5 * time.Second,
+	}
+
+	c.talkMu.Lock()
+	c.videoSession = videoSession
+	c.audioSession = audioSession
+	c.talkMu.Unlock()
 
 	var err error
 	c.stream, err = camera.NewStream(c.hap, videoCodec, audioCodec, c.videoSession, c.audioSession, c.Bitrate)
@@ -186,6 +208,8 @@ func (c *Client) Start() error {
 }
 
 func (c *Client) Stop() error {
+	c.stopTalk()
+
 	if c.videoSession != nil && c.videoSession.Remote != nil {
 		c.srtp.DelSession(c.videoSession)
 	}

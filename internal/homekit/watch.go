@@ -23,9 +23,10 @@ import (
 //
 // Config:
 //
-//	homekit_events:
-//	  camera1:                           # stream ID with a homekit:// source
-//	    webhook: http://192.168.1.2/hook # optional, POST JSON on each event
+//	homekit_client:
+//	  events:
+//	    camera1:                           # stream ID with a homekit:// source
+//	      webhook: http://192.168.1.2/hook # optional, POST JSON on each event
 
 const (
 	watchKeepAlive = 30 * time.Second
