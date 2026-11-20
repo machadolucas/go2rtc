@@ -26,6 +26,9 @@ type Consumer struct {
 	videoSession *srtp.Session
 	audioSession *srtp.Session
 	audioRTPTime byte
+
+	videoCrypto byte
+	audioCrypto byte
 }
 
 func NewConsumer(conn net.Conn, server *srtp.Server) *Consumer {
@@ -65,6 +68,9 @@ func (c *Consumer) SessionID() string {
 
 func (c *Consumer) SetOffer(offer *camera.SetupEndpointsRequest) {
 	c.sessionID = offer.SessionID
+	// answer should use the same crypto suite: AES_CM_128 or AES_256_CM
+	c.videoCrypto = offer.VideoCrypto.CryptoSuite
+	c.audioCrypto = offer.AudioCrypto.CryptoSuite
 	c.videoSession = &srtp.Session{
 		Remote: &srtp.Endpoint{
 			Addr:       offer.Address.IPAddr,
@@ -84,8 +90,8 @@ func (c *Consumer) SetOffer(offer *camera.SetupEndpointsRequest) {
 }
 
 func (c *Consumer) GetAnswer() *camera.SetupEndpointsResponse {
-	c.videoSession.Local = c.srtpEndpoint()
-	c.audioSession.Local = c.srtpEndpoint()
+	c.videoSession.Local = c.srtpEndpoint(len(c.videoSession.Remote.MasterKey))
+	c.audioSession.Local = c.srtpEndpoint(len(c.audioSession.Remote.MasterKey))
 
 	return &camera.SetupEndpointsResponse{
 		SessionID: c.sessionID,
@@ -96,12 +102,14 @@ func (c *Consumer) GetAnswer() *camera.SetupEndpointsResponse {
 			AudioRTPPort: c.audioSession.Local.Port,
 		},
 		VideoCrypto: camera.SRTPCryptoSuite{
-			MasterKey:  string(c.videoSession.Local.MasterKey),
-			MasterSalt: string(c.videoSession.Local.MasterSalt),
+			CryptoSuite: c.videoCrypto,
+			MasterKey:   string(c.videoSession.Local.MasterKey),
+			MasterSalt:  string(c.videoSession.Local.MasterSalt),
 		},
 		AudioCrypto: camera.SRTPCryptoSuite{
-			MasterKey:  string(c.audioSession.Local.MasterKey),
-			MasterSalt: string(c.audioSession.Local.MasterSalt),
+			CryptoSuite: c.audioCrypto,
+			MasterKey:   string(c.audioSession.Local.MasterKey),
+			MasterSalt:  string(c.audioSession.Local.MasterSalt),
 		},
 		VideoSSRC: c.videoSession.Local.SSRC,
 		AudioSSRC: c.audioSession.Local.SSRC,
@@ -188,12 +196,15 @@ func (c *Consumer) Stop() error {
 	return c.Connection.Stop()
 }
 
-func (c *Consumer) srtpEndpoint() *srtp.Endpoint {
+func (c *Consumer) srtpEndpoint(keySize int) *srtp.Endpoint {
+	if keySize != 32 {
+		keySize = 16
+	}
 	addr := c.conn.LocalAddr().(*net.TCPAddr)
 	return &srtp.Endpoint{
 		Addr:       addr.IP.To4().String(),
 		Port:       uint16(c.srtp.Port()),
-		MasterKey:  []byte(core.RandString(16, 0)),
+		MasterKey:  []byte(core.RandString(byte(keySize), 0)),
 		MasterSalt: []byte(core.RandString(14, 0)),
 		SSRC:       rand.Uint32(),
 	}

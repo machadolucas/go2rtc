@@ -48,8 +48,8 @@ func profile(key []byte) srtp.ProtectionProfile {
 	switch len(key) {
 	case 16:
 		return srtp.ProtectionProfileAes128CmHmacSha1_80
-		//case 32:
-		//	return srtp.ProtectionProfileAes256CmHmacSha1_80
+	case 32:
+		return srtp.ProtectionProfileAes256CmHmacSha1_80
 	}
 	return 0
 }
