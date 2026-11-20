@@ -55,3 +55,32 @@ func TestMiddlewareAuthSkipsHomeKitPairing(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	require.Equal(t, http.StatusUnauthorized, rr.Code)
 }
+
+func TestMiddlewareAuthToken(t *testing.T) {
+	AllowToken("api/homekit/characteristics", "secret")
+	AllowToken("api/empty", "")
+
+	h := middlewareAuth("admin", "pass", true, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	do := func(path, auth string) int {
+		req := httptest.NewRequest(http.MethodGet, "http://example.com"+path, nil)
+		req.RemoteAddr = "203.0.113.10:12345"
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr.Code
+	}
+
+	require.Equal(t, http.StatusOK, do("/api/homekit/characteristics?id=cam", "Bearer secret"))
+	require.Equal(t, http.StatusUnauthorized, do("/api/homekit/characteristics?id=cam", "Bearer wrong"))
+	require.Equal(t, http.StatusUnauthorized, do("/api/homekit/characteristics?id=cam", ""))
+	// the token is only for its own path
+	require.Equal(t, http.StatusUnauthorized, do("/api/streams", "Bearer secret"))
+	require.Equal(t, http.StatusUnauthorized, do("/api/config", "Bearer secret"))
+	// empty token never matches
+	require.Equal(t, http.StatusUnauthorized, do("/api/empty", "Bearer "))
+}

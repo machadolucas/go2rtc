@@ -29,6 +29,8 @@ func Init() {
 		} `yaml:"homekit"`
 		Client struct {
 			// external AAC-ELD encoder for two-way audio, see pkg/homekit/backchannel.go
+			// token for the api/homekit/characteristics without the API password
+			Token       string                 `yaml:"token"`
 			TalkEncoder string                 `yaml:"talk_encoder"`
 			Events      map[string]watchConfig `yaml:"events"`
 		} `yaml:"homekit_client"`
@@ -44,6 +46,7 @@ func Init() {
 	api.HandleFunc("api/discovery/homekit", apiDiscovery)
 
 	talkEncoder = cfg.Client.TalkEncoder
+	api.AllowToken("api/homekit/characteristics", cfg.Client.Token)
 
 	initWatchers(cfg.Client.Events)
 

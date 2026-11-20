@@ -226,6 +226,9 @@ func middlewareAuth(username, password string, localAuth bool, next http.Handler
 		case strings.HasPrefix(r.URL.Path, "/onvif/"), r.URL.Path == "/pair-setup", r.URL.Path == "/pair-verify":
 			next.ServeHTTP(w, r)
 			return
+		case checkToken(r):
+			next.ServeHTTP(w, r)
+			return
 		}
 
 		if localAuth || !isLoopback(r.RemoteAddr) {
@@ -240,6 +243,40 @@ func middlewareAuth(username, password string, localAuth bool, next http.Handler
 		next.ServeHTTP(w, r)
 	})
 }
+
+var tokensMu sync.RWMutex
+var tokens map[string]string
+
+// AllowToken - requests to this path with "Authorization: Bearer {token}"
+// header don't need the API username and password. So a client (ex. Home
+// Assistant) can get access to one function without the access to all API.
+func AllowToken(pattern, token string) {
+	if token == "" {
+		return
+	}
+	if len(pattern) == 0 || pattern[0] != '/' {
+		pattern = basePath + "/" + pattern
+	}
+	tokensMu.Lock()
+	if tokens == nil {
+		tokens = map[string]string{}
+	}
+	tokens[pattern] = token
+	tokensMu.Unlock()
+}
+
+func checkToken(r *http.Request) bool {
+	tokensMu.RLock()
+	token, ok := tokens[r.URL.Path]
+	tokensMu.RUnlock()
+	if !ok {
+		return false
+	}
+	got := sha256.Sum256([]byte(r.Header.Get("Authorization")))
+	want := sha256.Sum256([]byte("Bearer " + token))
+	return subtle.ConstantTimeCompare(got[:], want[:]) == 1
+}
+
 func middlewareCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")

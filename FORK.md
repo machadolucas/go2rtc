@@ -14,6 +14,7 @@ upstream in pieces; nothing has been proposed yet.
 |---|---|---|
 | **Long-lived HomeKit session with events.** go2rtc normally talks to the camera only while someone watches. This keeps one extra session open, subscribes to every event-capable characteristic (motion sensor, light state, ...), re-reads them every 30 s and reconnects by itself | `internal/homekit/watch.go`, `pkg/hap/client_chars.go` | `homekit_client.events` |
 | **Characteristics API.** Read every characteristic with a fresh value and write the writable ones: flood light, night vision, camera on/off, microphone and speaker volume, ... | same | `GET` / `PUT /api/homekit/characteristics?id=<stream>` |
+| **Scoped token** for the characteristics API, so a client can control the camera without the API password | `internal/api/api.go` | `homekit_client.token` |
 | **Webhook on change.** Every value change is POSTed as JSON, e.g. to a Home Assistant webhook | same | `homekit_client.events.<stream>.webhook` |
 | **ONVIF Events service** (PullPoint) with the motion topics `tns1:RuleEngine/CellMotionDetector/Motion` and `tns1:VideoSource/MotionAlarm`. This is what UniFi Protect 7.1+ reads. Motion comes from the HomeKit motion sensor, or from any other source through the API | `pkg/onvif/events.go`, `internal/onvif/onvif.go` | `POST /api/onvif/motion?src=<stream>&state=true` |
 | **ONVIF authentication** (WS-Security UsernameToken) separate from the API password. This is upstream PR [#2231](https://github.com/AlexxIT/go2rtc/pull/2231) by @ssttevee, cherry-picked, plus HTTP 400 on the fault | `pkg/onvif/auth.go` | `onvif.username`, `onvif.password` |
@@ -42,6 +43,7 @@ homekit:
 
 homekit_client:
   talk_encoder: /usr/local/bin/eldenc 16000 24000  # optional, two-way audio
+  token: long-random-string    # optional, see below
   events:
     porch:
       webhook: http://192.168.1.2:8123/api/webhook/porch_camera   # optional
@@ -60,6 +62,10 @@ curl -X PUT 'http://127.0.0.1:1984/api/homekit/characteristics?id=porch' \
 # report motion from another detector to ONVIF clients
 curl -X POST 'http://127.0.0.1:1984/api/onvif/motion?src=porch&state=true'
 ```
+
+With `homekit_client.token` set, `/api/homekit/characteristics` also accepts
+`Authorization: Bearer <token>` instead of the API username and password. The
+token opens nothing else, so it can be given to Home Assistant.
 
 Webhook body:
 
