@@ -49,3 +49,25 @@ func TestMiddlewareAuth(t *testing.T) {
 		})
 	}
 }
+
+func TestMiddlewareAuthSkipsHomeKitPairing(t *testing.T) {
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})
+	handler := middlewareAuth("admin", "secret", true, ok)
+
+	for _, path := range []string{"/pair-setup", "/pair-verify"} {
+		r := httptest.NewRequest("POST", path, nil)
+		r.RemoteAddr = "192.168.1.10:5000"
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		require.Equal(t, http.StatusOK, w.Code, path)
+	}
+
+	// other paths still need auth
+	for _, path := range []string{"/pairings", "/accessories", "/api/homekit", "/pair-setup/x"} {
+		r := httptest.NewRequest("GET", path, nil)
+		r.RemoteAddr = "192.168.1.10:5000"
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		require.Equal(t, http.StatusUnauthorized, w.Code, path)
+	}
+}

@@ -219,6 +219,13 @@ func middlewareAuth(username, password string, localAuth bool, next http.Handler
 	wantAuthHash := sha256.Sum256([]byte("Basic " + credentials))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// HomeKit controllers never send Basic auth, HAP has its own pairing
+		// and encryption. All other HAP requests go inside the hijacked conn.
+		if r.URL.Path == "/pair-setup" || r.URL.Path == "/pair-verify" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		if localAuth || !isLoopback(r.RemoteAddr) {
 			gotAuthHash := sha256.Sum256([]byte(r.Header.Get("Authorization")))
 			if subtle.ConstantTimeCompare(gotAuthHash[:], wantAuthHash[:]) != 1 {
