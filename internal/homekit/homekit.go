@@ -27,6 +27,7 @@ func Init() {
 			CategoryID    string   `yaml:"category_id"`
 			Pairings      []string `yaml:"pairings"`
 		} `yaml:"homekit"`
+		Events map[string]watchConfig `yaml:"homekit_events"`
 	}
 	app.LoadConfig(&cfg)
 
@@ -37,6 +38,8 @@ func Init() {
 	api.HandleFunc("api/homekit", apiHomekit)
 	api.HandleFunc("api/homekit/accessories", apiHomekitAccessories)
 	api.HandleFunc("api/discovery/homekit", apiDiscovery)
+
+	initWatchers(cfg.Events)
 
 	if cfg.Mod == nil {
 		return

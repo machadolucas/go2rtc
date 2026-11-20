@@ -239,9 +239,15 @@ func (c *Client) Close() error {
 	return c.Conn.Close()
 }
 
-func (c *Client) eventsReader() {
+// ListenEvents starts a background reader that routes EVENT/1.0 messages from
+// the accessory to OnEvent and everything else to the pending request.
+// Should be called once, after Dial. Requests still can't run in parallel.
+func (c *Client) ListenEvents() {
 	c.res = make(chan *http.Response)
+	go c.eventsReader()
+}
 
+func (c *Client) eventsReader() {
 	for {
 		var res *http.Response
 		if res, c.err = ReadResponse(c.reader, nil); c.err != nil {
