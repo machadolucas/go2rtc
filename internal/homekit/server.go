@@ -40,6 +40,7 @@ type server struct {
 	accessory *hap.Accessory // HAP accessory
 	consumer  *homekit.Consumer
 	proxyURL  string
+	rebroad   bool // proxy: send live stream from go2rtc, not from the camera
 	setupID   string
 	stream    string // stream name from YAML
 }
@@ -322,6 +323,38 @@ func (s *server) SetCharacteristic(conn net.Conn, aid uint8, iid uint64, value a
 			}()
 		}
 	}
+}
+
+// NewConsumer - homekit.ServerRebroadcast
+func (s *server) NewConsumer(conn net.Conn) *homekit.Consumer {
+	if !s.rebroad || srtp2.Server == nil {
+		return nil
+	}
+	return homekit.NewConsumer(conn, srtp2.Server)
+}
+
+// StartConsumer - homekit.ServerRebroadcast
+func (s *server) StartConsumer(consumer *homekit.Consumer) error {
+	stream := streams.Get(s.stream)
+	if stream == nil {
+		return errors.New("homekit: stream not found")
+	}
+
+	if err := stream.AddConsumer(consumer); err != nil {
+		log.Debug().Err(err).Str("stream", s.stream).Msg("[homekit] rebroadcast")
+		return err
+	}
+
+	s.AddConn(consumer)
+
+	go func() {
+		_, _ = consumer.WriteTo(nil)
+		stream.RemoveConsumer(consumer)
+
+		s.DelConn(consumer)
+	}()
+
+	return nil
 }
 
 func (s *server) GetImage(conn net.Conn, width, height int) []byte {

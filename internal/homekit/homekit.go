@@ -26,6 +26,7 @@ func Init() {
 			DevicePrivate string   `yaml:"device_private"`
 			CategoryID    string   `yaml:"category_id"`
 			Pairings      []string `yaml:"pairings"`
+			Rebroadcast   bool     `yaml:"rebroadcast"`
 		} `yaml:"homekit"`
 		Client struct {
 			// external AAC-ELD encoder for two-way audio, see pkg/homekit/backchannel.go
@@ -114,6 +115,7 @@ func Init() {
 		if url := findHomeKitURL(stream.Sources()); url != "" {
 			// 1. Act as transparent proxy for HomeKit camera
 			srv.proxyURL = url
+			srv.rebroad = conf.Rebroadcast
 		} else {
 			// 2. Act as basic HomeKit camera
 			srv.accessory = camera.NewAccessory("AlexxIT", "go2rtc", name, "-", app.Version)

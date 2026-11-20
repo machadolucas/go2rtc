@@ -122,7 +122,18 @@ func (c *Consumer) SetConfig(conf *camera.SelectedStreamConfiguration) bool {
 	c.audioSession.Remote.SSRC = conf.AudioCodec.RTPParams[0].SSRC
 	c.audioSession.PayloadType = conf.AudioCodec.RTPParams[0].PayloadType
 	c.audioSession.RTCPInterval = toDuration(conf.AudioCodec.RTPParams[0].RTCPInterval)
-	c.audioRTPTime = conf.AudioCodec.CodecParams[0].RTPTime[0]
+	if len(conf.AudioCodec.CodecParams) > 0 && len(conf.AudioCodec.CodecParams[0].RTPTime) > 0 {
+		c.audioRTPTime = conf.AudioCodec.CodecParams[0].RTPTime[0]
+	}
+
+	// The controller selects the audio codec from the list of the accessory.
+	// For the basic go2rtc camera it is always Opus, but for the proxy with
+	// rebroadcast it is the codec of the real camera (usually AAC-ELD).
+	if int(conf.AudioCodec.CodecType) < len(audioCodecs) {
+		if name := audioCodecs[conf.AudioCodec.CodecType]; name != core.CodecOpus {
+			c.Medias[1].Codecs = []*core.Codec{{Name: name}}
+		}
+	}
 
 	c.srtp.AddSession(c.videoSession)
 	c.srtp.AddSession(c.audioSession)

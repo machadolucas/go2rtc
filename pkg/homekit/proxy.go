@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/hap"
@@ -21,6 +22,21 @@ type ServerProxy interface {
 	DelConn(conn any)
 }
 
+// ServerRebroadcast is an optional part of the ServerProxy.
+//
+// HomeKit cameras can stream only to one or two clients at the same time, and
+// the go2rtc producer is already one of them. With rebroadcast the proxy
+// answers the live stream requests (SetupEndpoints, SelectedStreamConfiguration,
+// StreamingStatus) by itself and sends the stream it already receives from the
+// camera. Everything else (other characteristics, events, snapshots, HDS) still
+// goes to the camera.
+type ServerRebroadcast interface {
+	// NewConsumer returns nil if rebroadcast is disabled
+	NewConsumer(conn net.Conn) *Consumer
+	// StartConsumer adds the consumer to the stream and runs it in background
+	StartConsumer(consumer *Consumer) error
+}
+
 func ProxyHandler(srv ServerProxy, acc net.Conn) HandlerFunc {
 	return func(con net.Conn) error {
 		defer con.Close()
@@ -29,6 +45,19 @@ func ProxyHandler(srv ServerProxy, acc net.Conn) HandlerFunc {
 			con: con.(*hap.Conn),
 			acc: acc.(*hap.Conn),
 			res: make(chan *http.Response),
+		}
+
+		pr.accRd = bufio.NewReader(pr.acc)
+
+		if rb, ok := srv.(ServerRebroadcast); ok {
+			pr.rebroadcast = rb
+			defer pr.stopConsumers()
+
+			// Controllers cache the accessory database and usually don't ask
+			// for it on a new connection, so the proxy reads it by itself.
+			if err := pr.readAccessories(); err != nil {
+				return err
+			}
 		}
 
 		// accessory (ex. Camera) => controller (ex. iPhone)
@@ -43,6 +72,16 @@ type Proxy struct {
 	con *hap.Conn
 	acc *hap.Conn
 	res chan *http.Response
+
+	accRd *bufio.Reader
+
+	rebroadcast ServerRebroadcast
+
+	mu        sync.Mutex
+	streamIDs map[uint64]string // iid => type for SetupEndpoints, SelectedStreamConfiguration, StreamingStatus
+	pending   *Consumer         // after SetupEndpoints, before SelectedStreamConfiguration
+	answer    string            // SetupEndpoints response for the pending consumer
+	consumers []*Consumer
 }
 
 func (p *Proxy) handleCon(srv ServerProxy) error {
@@ -82,11 +121,41 @@ func (p *Proxy) handleCon(srv ServerProxy) error {
 			req.Body = io.NopCloser(bytes.NewReader(body))
 		}
 
+		if p.rebroadcast != nil && req.URL.Path == hap.PathCharacteristics {
+			var res *http.Response
+			if res, err = p.handleStream(req); err != nil {
+				return err
+			}
+			if res != nil {
+				if err = res.Write(p.con); err != nil {
+					return err
+				}
+				continue
+			}
+		}
+
 		if err = req.Write(p.acc); err != nil {
 			return err
 		}
 
 		res := <-p.res
+
+		if p.rebroadcast != nil {
+			switch {
+			case req.Method == "GET" && req.URL.Path == hap.PathAccessories:
+				body, _ := io.ReadAll(res.Body)
+				body = p.patchAccessories(body)
+				res.ContentLength = int64(len(body))
+				res.Body = io.NopCloser(bytes.NewReader(body))
+			case req.Method == "GET" && req.URL.Path == hap.PathCharacteristics:
+				body, _ := io.ReadAll(res.Body)
+				if b := p.patchCharacteristics(body); b != nil {
+					body = b
+				}
+				res.ContentLength = int64(len(body))
+				res.Body = io.NopCloser(bytes.NewReader(body))
+			}
+		}
 
 		switch {
 		case req.Method == "GET" && req.URL.Path == hap.PathAccessories:
@@ -140,7 +209,7 @@ func (p *Proxy) handleCon(srv ServerProxy) error {
 }
 
 func (p *Proxy) handleAcc() error {
-	rd := bufio.NewReader(p.acc)
+	rd := p.accRd
 	for {
 		res, err := hap.ReadResponse(rd, nil)
 		if err != nil {
@@ -148,6 +217,14 @@ func (p *Proxy) handleAcc() error {
 		}
 
 		if res.Proto == hap.ProtoEvent {
+			if p.rebroadcast != nil {
+				body, _ := io.ReadAll(res.Body)
+				if body = p.patchCharacteristics(body); body == nil {
+					continue
+				}
+				res.ContentLength = int64(len(body))
+				res.Body = io.NopCloser(bytes.NewReader(body))
+			}
 			if err = hap.WriteEvent(p.con, res); err != nil {
 				return err
 			}
