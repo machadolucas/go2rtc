@@ -106,9 +106,10 @@ Tested against one camera, an Eve Outdoor Cam (firmware 1.0.1), on macOS:
 - proxy rebroadcast: works with Apple devices (Home app live view and two-way
   audio) while UniFi Protect records the same camera; needs the AES_256 SRTP
   support of this branch, because Apple devices select it
-- UniFi Protect 7.x: adoption by `host:1984` with the ONVIF login, video, audio
+- UniFi Protect: adoption by `host:1984` with the ONVIF login, video, audio
   (`onvif.audio`, the AAC default query and "Stream Compatibility Mode:
-  Improved" in Protect), motion events and snapshots work
+  Improved" in Protect) and motion events work; snapshots with the ONVIF login
+  are tested with curl only
 
 ## Build
 
