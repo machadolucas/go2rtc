@@ -84,9 +84,13 @@ macOS.
 Tested against one camera, an Eve Outdoor Cam (firmware 1.0.1), on macOS:
 
 - events session, characteristics API, webhook: tested on the camera
+- streaming with an AAC-LC transcode (`ffmpeg:<stream>#audio=aac`), including
+  audio-only consumers: tested
+- two-way audio: tested with the `play audio` API (a tone sent as PCMA was
+  played by the camera speaker); not yet tested from a WebRTC client
 - ONVIF events and auth: tested with a scripted client that follows the
   request sequence UniFi Protect uses; **not yet tested with a real Protect**
-- two-way audio: **not yet tested**
+- a real motion event from the camera's sensor: not observed yet
 
 ## Build
 
