@@ -106,7 +106,10 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 	if authUsername != "" && operation != onvif.DeviceGetSystemDateAndTime {
 		if !onvif.ValidateUsernameToken(b, authUsername, authPassword, time.Now(), onvif.DefaultUsernameTokenAge) {
 			log.Debug().Str("addr", r.RemoteAddr).Str("operation", operation).Msg("[onvif] auth failed")
-			api.Response(w, onvif.NotAuthorizedResponse(), "application/soap+xml; charset=utf-8")
+			// SOAP fault should have HTTP status 400, important for UniFi Protect
+			w.Header().Set("Content-Type", "application/soap+xml; charset=utf-8")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write(onvif.NotAuthorizedResponse())
 			return
 		}
 	}

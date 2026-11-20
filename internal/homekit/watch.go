@@ -117,6 +117,18 @@ func Motion(stream string) (motion, ok bool) {
 	return false, false
 }
 
+// normValue - accessories report bool as true/false or 1/0, and a client
+// can write any of them
+func normValue(v any) any {
+	if b, ok := v.(bool); ok {
+		if b {
+			return float64(1)
+		}
+		return float64(0)
+	}
+	return v
+}
+
 func toBool(v any) bool {
 	switch v := v.(type) {
 	case bool:
@@ -316,7 +328,7 @@ func (w *watcher) update(aid, iid uint64, value any, notify bool) {
 		return
 	}
 	// ProgrammableSwitchEvent (doorbell press) is an event even with the same value
-	changed := !reflect.DeepEqual(info.Value, value) || info.Type == TypeProgrammableSwitchEvent
+	changed := !reflect.DeepEqual(normValue(info.Value), normValue(value)) || info.Type == TypeProgrammableSwitchEvent
 	info.Value = value
 	event := Event{Stream: w.stream, AID: aid, IID: iid, Type: info.Type, Service: info.Service, Value: value}
 	w.mu.Unlock()
