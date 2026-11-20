@@ -30,17 +30,25 @@ const (
 	talkMaxFrameBytes = 2048
 )
 
-func talkMedia() *core.Media {
-	return &core.Media{
+// talkMedia - AAC-ELD is passed to the camera as is (from a HomeKit
+// controller). Other codecs need the external encoder.
+func talkMedia(encoder bool) *core.Media {
+	media := &core.Media{
 		Kind:      core.KindAudio,
 		Direction: core.DirectionSendonly,
 		Codecs: []*core.Codec{
-			{Name: core.CodecPCMA, ClockRate: 8000},
-			{Name: core.CodecPCMU, ClockRate: 8000},
-			{Name: core.CodecPCML, ClockRate: talkSampleRate},
-			{Name: core.CodecPCM, ClockRate: talkSampleRate},
+			{Name: core.CodecELD, ClockRate: talkSampleRate},
 		},
 	}
+	if encoder {
+		media.Codecs = append(media.Codecs,
+			&core.Codec{Name: core.CodecPCMA, ClockRate: 8000},
+			&core.Codec{Name: core.CodecPCMU, ClockRate: 8000},
+			&core.Codec{Name: core.CodecPCML, ClockRate: talkSampleRate},
+			&core.Codec{Name: core.CodecPCM, ClockRate: talkSampleRate},
+		)
+	}
+	return media
 }
 
 func (c *Client) GetTrack(media *core.Media, codec *core.Codec) (*core.Receiver, error) {
@@ -51,6 +59,10 @@ func (c *Client) GetTrack(media *core.Media, codec *core.Codec) (*core.Receiver,
 }
 
 func (c *Client) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiver) error {
+	if track.Codec.Name == core.CodecELD {
+		return c.addTalkPassthrough(media, track)
+	}
+
 	if c.TalkCommand == "" {
 		return errors.New("homekit: talk encoder not configured")
 	}
@@ -88,6 +100,35 @@ func (c *Client) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiver
 	sender.HandleRTP(track)
 	c.Senders = append(c.Senders, sender)
 
+	return nil
+}
+
+// addTalkPassthrough sends AAC-ELD from the consumer to the camera as is.
+func (c *Client) addTalkPassthrough(media *core.Media, track *core.Receiver) error {
+	var seq uint16
+
+	sender := core.NewSender(media, track.Codec)
+	sender.Handler = func(packet *rtp.Packet) {
+		c.talkMu.Lock()
+		session := c.audioSession
+		c.talkMu.Unlock()
+
+		// before the Start and after the Stop
+		if session == nil || session.Remote == nil {
+			return
+		}
+
+		seq++
+		clone := &rtp.Packet{
+			Header:  rtp.Header{Marker: packet.Marker, SequenceNumber: seq, Timestamp: packet.Timestamp},
+			Payload: packet.Payload,
+		}
+		if n, err := session.WriteRTP(clone); err == nil {
+			c.Send += n
+		}
+	}
+	sender.HandleRTP(track)
+	c.Senders = append(c.Senders, sender)
 	return nil
 }
 

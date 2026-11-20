@@ -132,6 +132,16 @@ func (c *Consumer) SetConfig(conf *camera.SelectedStreamConfiguration) bool {
 	if int(conf.AudioCodec.CodecType) < len(audioCodecs) {
 		if name := audioCodecs[conf.AudioCodec.CodecType]; name != core.CodecOpus {
 			c.Medias[1].Codecs = []*core.Codec{{Name: name}}
+
+			// Two-way audio: the controller sends the same codec back. It can
+			// be passed to a producer that supports it as is (HomeKit camera).
+			if name == core.CodecELD && len(c.Medias) == 2 {
+				c.Medias = append(c.Medias, &core.Media{
+					Kind:      core.KindAudio,
+					Direction: core.DirectionRecvonly,
+					Codecs:    []*core.Codec{{Name: core.CodecELD, ClockRate: 16000}},
+				})
+			}
 		}
 	}
 
@@ -182,6 +192,26 @@ func (c *Consumer) AddTrack(media *core.Media, codec *core.Codec, track *core.Re
 
 	sender.HandleRTP(track)
 	c.Senders = append(c.Senders, sender)
+	return nil
+}
+
+// GetTrack - audio from the controller (two-way audio)
+func (c *Consumer) GetTrack(media *core.Media, codec *core.Codec) (*core.Receiver, error) {
+	if media.Direction != core.DirectionRecvonly || c.audioSession == nil {
+		return nil, core.ErrCantGetTrack
+	}
+
+	receiver := core.NewReceiver(media, codec)
+	c.audioSession.OnReadRTP = func(packet *rtp.Packet) {
+		c.Recv += len(packet.Payload)
+		receiver.WriteRTP(packet)
+	}
+	c.Receivers = append(c.Receivers, receiver)
+	return receiver, nil
+}
+
+// Start - only for the core.Producer interface (two-way audio)
+func (c *Consumer) Start() error {
 	return nil
 }
 

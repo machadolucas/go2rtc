@@ -131,9 +131,7 @@ func (c *Client) GetMedias() []*core.Media {
 		},
 	}
 
-	if c.TalkCommand != "" {
-		c.Medias = append(c.Medias, talkMedia())
-	}
+	c.Medias = append(c.Medias, talkMedia(c.TalkCommand != ""))
 
 	return c.Medias
 }
