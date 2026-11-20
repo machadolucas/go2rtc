@@ -219,7 +219,11 @@ func middlewareAuth(username, password string, localAuth bool, next http.Handler
 	wantAuthHash := sha256.Sum256([]byte("Basic " + credentials))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/onvif/") {
+		// ONVIF has its own auth (WS-Security UsernameToken) and HomeKit
+		// (HAP) has its own pairing and encryption. Their clients never
+		// send the Basic auth.
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/onvif/"), r.URL.Path == "/pair-setup", r.URL.Path == "/pair-verify":
 			next.ServeHTTP(w, r)
 			return
 		}
