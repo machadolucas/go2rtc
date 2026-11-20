@@ -105,8 +105,13 @@ func (p *Proxy) patchAccessories(body []byte) []byte {
 	}
 
 	p.mu.Lock()
+	first := p.streamIDs == nil
 	p.streamIDs = ids
 	p.mu.Unlock()
+
+	if first && p.rebroadcast != nil {
+		p.rebroadcast.Debug("rebroadcast %s: stream characteristics %v", p.con.RemoteAddr(), ids)
+	}
 
 	if b, err := json.Marshal(v); err == nil {
 		return b
@@ -130,17 +135,21 @@ func (p *Proxy) patchCharacteristics(body []byte) []byte {
 	changed := false
 	for _, char := range chars {
 		char, _ := char.(map[string]any)
-		if _, ok := char["value"]; ok && p.streamType(toUint(char["iid"])) == camera.TypeStreamingStatus {
+		if _, ok := char["value"]; !ok {
+			continue
+		}
+		switch p.streamType(toUint(char["iid"])) {
+		case camera.TypeStreamingStatus:
 			char["value"] = streamingAvailable()
 			changed = true
+			if len(chars) == 1 {
+				return nil // response has other handler, so this is only for events
+			}
 		}
 	}
 
 	if !changed {
 		return body
-	}
-	if len(chars) == 1 {
-		return nil // response has other handler, so this is only for events
 	}
 	if b, err := json.Marshal(v); err == nil {
 		return b
@@ -156,6 +165,15 @@ func (p *Proxy) handleStream(req *http.Request) (*http.Response, error) {
 		// GET /characteristics?id=1.55
 		query := req.URL.Query()
 		ids := strings.Split(query.Get("id"), ",")
+
+		for _, id := range ids {
+			_, s2, _ := strings.Cut(id, ".")
+			iid, _ := strconv.ParseUint(s2, 10, 64)
+			if typ := p.streamType(iid); typ != "" && typ != camera.TypeStreamingStatus {
+				p.rebroadcast.Debug("rebroadcast %s: GET %s", p.con.RemoteAddr(), req.URL.RawQuery)
+				break
+			}
+		}
 
 		var v hap.JSONCharacters
 		for _, id := range ids {
@@ -207,6 +225,13 @@ func (p *Proxy) handleStream(req *http.Request) (*http.Response, error) {
 			return nil, nil
 		}
 
+		for _, char := range v.Value {
+			if typ := p.streamType(char.IID); typ != "" {
+				s, _ := char.Value.(string)
+				p.rebroadcast.Debug("rebroadcast %s: PUT type=%s items=%d value=%d bytes body=%d", p.con.RemoteAddr(), typ, len(v.Value), len(s), len(body))
+			}
+		}
+
 		// the stream setup is always a separate request with value
 		for _, char := range v.Value {
 			if char.Value == nil {
@@ -230,6 +255,9 @@ func (p *Proxy) handleStream(req *http.Request) (*http.Response, error) {
 					return nil, nil // rebroadcast disabled
 				}
 				consumer.SetOffer(&offer)
+				p.rebroadcast.Debug("rebroadcast %s: offer media addr=%s video=%d audio=%d crypto=%d key=%d bytes", p.con.RemoteAddr(),
+					offer.Address.IPAddr, offer.Address.VideoRTPPort, offer.Address.AudioRTPPort,
+					offer.VideoCrypto.CryptoSuite, len(offer.VideoCrypto.MasterKey))
 
 				// the answer has random keys, so it should be generated once
 				answer, err := tlv8.MarshalBase64(consumer.GetAnswer())
@@ -271,10 +299,14 @@ func (p *Proxy) selectStream(conf *camera.SelectedStreamConfiguration) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	p.rebroadcast.Debug("rebroadcast %s: select cmd=%d pending=%t video=%+v audio=%+v",
+		p.con.RemoteAddr(), conf.Control.Command, p.pending != nil, conf.VideoCodec, conf.AudioCodec)
+
 	switch conf.Control.Command {
 	case camera.SessionCommandStart:
 		consumer := p.pending
 		if consumer == nil || !consumer.SetConfig(conf) {
+			p.rebroadcast.Debug("rebroadcast %s: wrong session", p.con.RemoteAddr())
 			return
 		}
 		p.pending = nil

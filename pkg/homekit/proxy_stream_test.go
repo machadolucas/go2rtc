@@ -12,6 +12,7 @@ const testAccessories = `{"accessories":[{"aid":1,"services":[
 {"iid":48,"type":"00000110-0000-1000-8000-0026BB765291","characteristics":[
  {"iid":50,"type":"B0","format":"uint8","perms":["pr","pw","ev"],"value":1,"minValue":0,"maxValue":1},
  {"iid":51,"type":"120","format":"tlv8","perms":["pr","ev"],"value":"AQEB"},
+ {"iid":54,"type":"116","format":"tlv8","perms":["pr"],"value":"AgEAAAACAQEAAAIBAg=="},
  {"iid":55,"type":"118","format":"tlv8","perms":["pr","pw"],"value":""},
  {"iid":56,"type":"117","format":"tlv8","perms":["pr","pw"],"value":""}]},
 {"iid":192,"type":"43","characteristics":[
@@ -26,6 +27,8 @@ func TestProxyPatchAccessories(t *testing.T) {
 	require.Equal(t, camera.TypeSetupEndpoints, p.streamType(55))
 	require.Equal(t, camera.TypeSelectedStreamConfiguration, p.streamType(56))
 	require.Equal(t, "", p.streamType(50))
+	// the list of crypto suites is not changed
+	require.Contains(t, string(body), "AgEAAAACAQEAAAIBAg==")
 
 	s := string(body)
 	// "in use" (AQEB) became "available" (AQEA)

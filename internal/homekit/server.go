@@ -333,6 +333,11 @@ func (s *server) NewConsumer(conn net.Conn) *homekit.Consumer {
 	return homekit.NewConsumer(conn, srtp2.Server)
 }
 
+// Debug - homekit.ServerRebroadcast
+func (s *server) Debug(format string, args ...any) {
+	log.Debug().Str("stream", s.stream).Msgf("[homekit] "+format, args...)
+}
+
 // StartConsumer - homekit.ServerRebroadcast
 func (s *server) StartConsumer(consumer *homekit.Consumer) error {
 	stream := streams.Get(s.stream)

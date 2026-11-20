@@ -35,6 +35,8 @@ type ServerRebroadcast interface {
 	NewConsumer(conn net.Conn) *Consumer
 	// StartConsumer adds the consumer to the stream and runs it in background
 	StartConsumer(consumer *Consumer) error
+	// Debug log
+	Debug(format string, args ...any)
 }
 
 func ProxyHandler(srv ServerProxy, acc net.Conn) HandlerFunc {
