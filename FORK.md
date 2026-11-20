@@ -99,8 +99,11 @@ Tested against one camera, an Eve Outdoor Cam (firmware 1.0.1), on macOS:
   audio-only consumers: tested
 - two-way audio: tested with the `play audio` API (a tone sent as PCMA was
   played by the camera speaker); not yet tested from a WebRTC client
-- ONVIF events and auth: tested with a scripted client that follows the
-  request sequence UniFi Protect uses; **not yet tested with a real Protect**
+- UniFi Protect: adoption by `host:1984` with the ONVIF login works, video and
+  audio play (audio needs `onvif.audio`, the AAC default query, and "Stream
+  Compatibility Mode: Improved" on the camera in Protect); **motion events are
+  not yet confirmed in a real Protect**, only with a scripted client that
+  follows Protect's request sequence
 - a real motion event from the camera's sensor: not observed yet
 
 ## Build
