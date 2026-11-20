@@ -27,11 +27,13 @@ func Init() {
 		Mod struct {
 			Username string `yaml:"username"`
 			Password string `yaml:"password"`
+			Audio    bool   `yaml:"audio"`
 		} `yaml:"onvif"`
 	}
 	app.LoadConfig(&cfg)
 	authUsername = cfg.Mod.Username
 	authPassword = cfg.Mod.Password
+	audio = cfg.Mod.Audio
 
 	streams.HandleFunc("onvif", streamOnvif)
 
@@ -62,6 +64,7 @@ var log zerolog.Logger
 var events = onvif.NewEvents()
 var authUsername string
 var authPassword string
+var audio bool // advertise AAC audio in the profiles
 
 func streamOnvif(rawURL string) (core.Producer, error) {
 	client, err := onvif.NewClient(rawURL)
@@ -173,11 +176,29 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 		onvif.DeviceGetScopes,
 		onvif.MediaGetVideoEncoderConfiguration,
 		onvif.MediaGetVideoEncoderConfigurations,
-		onvif.MediaGetAudioEncoderConfigurations,
-		onvif.MediaGetVideoEncoderConfigurationOptions,
-		onvif.MediaGetAudioSources,
-		onvif.MediaGetAudioSourceConfigurations:
+		onvif.MediaGetVideoEncoderConfigurationOptions:
 		b = onvif.StaticResponse(operation)
+
+	case onvif.MediaGetAudioEncoderConfigurations:
+		if audio {
+			b = onvif.GetAudioEncoderConfigurationsResponse()
+		} else {
+			b = onvif.StaticResponse(operation)
+		}
+
+	case onvif.MediaGetAudioSources:
+		if audio {
+			b = onvif.GetAudioSourcesResponse(streams.GetAllNames())
+		} else {
+			b = onvif.StaticResponse(operation)
+		}
+
+	case onvif.MediaGetAudioSourceConfigurations:
+		if audio {
+			b = onvif.GetAudioSourceConfigurationsResponse(streams.GetAllNames())
+		} else {
+			b = onvif.StaticResponse(operation)
+		}
 
 	case onvif.DeviceGetCapabilities:
 		// important for Hass: Media section
@@ -202,11 +223,11 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 
 	case onvif.MediaGetProfiles:
 		// important for Hass: H264 codec, width, height
-		b = onvif.GetProfilesResponse(streams.GetAllNames())
+		b = onvif.GetProfilesResponse(streams.GetAllNames(), audio)
 
 	case onvif.MediaGetProfile:
 		token := onvif.FindTagValue(b, "ProfileToken")
-		b = onvif.GetProfileResponse(token)
+		b = onvif.GetProfileResponse(token, audio)
 
 	case onvif.MediaGetVideoSourceConfigurations:
 		// important for Happytime Onvif Client

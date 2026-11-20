@@ -152,31 +152,89 @@ func GetDeviceInformationResponse(manuf, model, firmware, serial string) []byte 
 	return e.Bytes()
 }
 
-func GetProfilesResponse(names []string) []byte {
+func GetProfilesResponse(names []string, audio bool) []byte {
 	e := NewEnvelope()
 	e.Append(`<trt:GetProfilesResponse>`)
 	for _, name := range names {
-		appendProfile(e, "Profiles", name)
+		appendProfile(e, "Profiles", name, audio)
 	}
 	e.Append(`</trt:GetProfilesResponse>`)
 	return e.Bytes()
 }
 
-func GetProfileResponse(name string) []byte {
+func GetProfileResponse(name string, audio bool) []byte {
 	e := NewEnvelope()
 	e.Append(`<trt:GetProfileResponse>`)
-	appendProfile(e, "Profile", name)
+	appendProfile(e, "Profile", name, audio)
 	e.Append(`</trt:GetProfileResponse>`)
 	return e.Bytes()
 }
 
-func appendProfile(e *Envelope, tag, name string) {
+func appendProfile(e *Envelope, tag, name string, audio bool) {
 	// go2rtc name = ONVIF Profile Name = ONVIF Profile token
 	e.Appendf(`<trt:%s token="%s" fixed="true">`, tag, name)
 	e.Appendf(`<tt:Name>%s</tt:Name>`, name)
 	appendVideoSourceConfiguration(e, "VideoSourceConfiguration", name)
+	if audio {
+		appendAudioSourceConfiguration(e, "AudioSourceConfiguration", name)
+	}
 	appendVideoEncoderConfiguration(e, "VideoEncoderConfiguration")
+	if audio {
+		appendAudioEncoderConfiguration(e, "AudioEncoderConfiguration")
+	}
 	e.Appendf(`</trt:%s>`, tag)
+}
+
+// Audio in the ONVIF profile is optional (onvif.audio in the config), because
+// go2rtc doesn't know the stream codecs before the first connection. Some
+// clients (ex. UniFi Protect) ignore the audio track from RTSP without it.
+
+func appendAudioSourceConfiguration(e *Envelope, tag, name string) {
+	// go2rtc name = ONVIF AudioSourceConfiguration token = ONVIF AudioSource token
+	e.Appendf(`<tt:%s token="%s">
+	<tt:Name>ASC</tt:Name>
+	<tt:UseCount>1</tt:UseCount>
+	<tt:SourceToken>%s</tt:SourceToken>
+</tt:%s>`, tag, name, name, tag)
+}
+
+func appendAudioEncoderConfiguration(e *Envelope, tag string) {
+	e.Appendf(`<tt:%s token="aec">
+	<tt:Name>AEC</tt:Name>
+	<tt:UseCount>1</tt:UseCount>
+	<tt:Encoding>AAC</tt:Encoding>
+	<tt:Bitrate>32</tt:Bitrate>
+	<tt:SampleRate>16</tt:SampleRate>
+	<tt:SessionTimeout>PT10S</tt:SessionTimeout>
+</tt:%s>`, tag, tag)
+}
+
+func GetAudioSourcesResponse(names []string) []byte {
+	e := NewEnvelope()
+	e.Append(`<trt:GetAudioSourcesResponse>`)
+	for _, name := range names {
+		e.Appendf(`<trt:AudioSources token="%s"><tt:Channels>1</tt:Channels></trt:AudioSources>`, name)
+	}
+	e.Append(`</trt:GetAudioSourcesResponse>`)
+	return e.Bytes()
+}
+
+func GetAudioSourceConfigurationsResponse(names []string) []byte {
+	e := NewEnvelope()
+	e.Append(`<trt:GetAudioSourceConfigurationsResponse>`)
+	for _, name := range names {
+		appendAudioSourceConfiguration(e, "Configurations", name)
+	}
+	e.Append(`</trt:GetAudioSourceConfigurationsResponse>`)
+	return e.Bytes()
+}
+
+func GetAudioEncoderConfigurationsResponse() []byte {
+	e := NewEnvelope()
+	e.Append(`<trt:GetAudioEncoderConfigurationsResponse>`)
+	appendAudioEncoderConfiguration(e, "Configurations")
+	e.Append(`</trt:GetAudioEncoderConfigurationsResponse>`)
+	return e.Bytes()
 }
 
 func GetVideoSourcesResponse(names []string) []byte {

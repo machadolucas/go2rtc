@@ -132,3 +132,15 @@ func TestEventsLimits(t *testing.T) {
 	_, _, ok := e.Subscribe(time.Minute)
 	require.False(t, ok)
 }
+
+func TestAudioResponses(t *testing.T) {
+	names := []string{"cam"}
+	wellFormed(t, GetProfilesResponse(names, true))
+	wellFormed(t, GetProfileResponse("cam", true))
+	wellFormed(t, GetAudioSourcesResponse(names))
+	wellFormed(t, GetAudioSourceConfigurationsResponse(names))
+	wellFormed(t, GetAudioEncoderConfigurationsResponse())
+
+	require.Contains(t, string(GetProfilesResponse(names, true)), "<tt:Encoding>AAC</tt:Encoding>")
+	require.NotContains(t, string(GetProfilesResponse(names, false)), "AudioEncoderConfiguration")
+}

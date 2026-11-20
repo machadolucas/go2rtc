@@ -18,6 +18,7 @@ upstream in pieces; nothing has been proposed yet.
 | **Webhook on change.** Every value change is POSTed as JSON, e.g. to a Home Assistant webhook | same | `homekit_client.events.<stream>.webhook` |
 | **ONVIF Events service** (PullPoint) with the motion topics `tns1:RuleEngine/CellMotionDetector/Motion` and `tns1:VideoSource/MotionAlarm`. This is what UniFi Protect 7.1+ reads. Motion comes from the HomeKit motion sensor, or from any other source through the API | `pkg/onvif/events.go`, `internal/onvif/onvif.go` | `POST /api/onvif/motion?src=<stream>&state=true` |
 | **ONVIF authentication** (WS-Security UsernameToken) separate from the API password. This is upstream PR [#2231](https://github.com/AlexxIT/go2rtc/pull/2231) by @ssttevee, cherry-picked, plus HTTP 400 on the fault | `pkg/onvif/auth.go` | `onvif.username`, `onvif.password` |
+| **Audio in the ONVIF profiles** (AAC `AudioEncoderConfiguration`, audio sources), opt-in. Without it UniFi Protect treats the camera as having no microphone | `pkg/onvif/server.go` | `onvif.audio` |
 | **HomeKit pairing works with an API password.** `/pair-setup` and `/pair-verify` skip the API Basic auth; HAP has its own pairing and encryption, and Apple devices never send Basic auth | `internal/api/api.go` | none |
 | **Two-way audio for HomeKit sources.** Clients send PCMA/PCMU/PCM (WebRTC, RTSP backchannel, the `play audio` API); an external encoder turns it into the AAC-ELD the camera expects | `pkg/homekit/backchannel.go`, `examples/homekit_eldenc` | `homekit_client.talk_encoder` |
 
@@ -32,6 +33,10 @@ api:
 onvif:
   username: protect        # what you type in UniFi Protect when adopting
   password: secret2
+  audio: true              # advertise AAC audio in the ONVIF profiles (Protect needs it)
+
+rtsp:
+  default_query: "video&audio=aac"   # give RTSP clients AAC instead of the camera's AAC-ELD
 
 streams:
   porch:
