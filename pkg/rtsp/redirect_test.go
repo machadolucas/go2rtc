@@ -58,15 +58,8 @@ func redirectServer(t *testing.T, reply func(addr, cseq string) string) (addr st
 	return
 }
 
-func setTimeout(t *testing.T, d time.Duration) {
-	// other tests in this package leave a tiny global Timeout behind
-	old := Timeout
-	Timeout = d
-	t.Cleanup(func() { Timeout = old })
-}
-
 func TestRedirectLoop(t *testing.T) {
-	setTimeout(t, 5*time.Second)
+	setTimeout(t)
 
 	addr, conns := redirectServer(t, func(addr, cseq string) string {
 		return "RTSP/1.0 302 Found\r\nCSeq: " + cseq + "\r\nLocation: rtsp://" + addr + "/stream\r\n\r\n"
@@ -90,7 +83,7 @@ func TestRedirectLoop(t *testing.T) {
 }
 
 func TestRedirectOnce(t *testing.T) {
-	setTimeout(t, 5*time.Second)
+	setTimeout(t)
 
 	target, _ := redirectServer(t, func(_, cseq string) string {
 		return "RTSP/1.0 200 OK\r\nCSeq: " + cseq + "\r\nContent-Type: application/sdp\r\nContent-Length: " +

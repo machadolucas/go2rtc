@@ -72,17 +72,23 @@ func TestVideoCodecParams(t *testing.T) {
 		CVOID             []byte `tlv8:"5"`
 	}
 
+	// Older cameras can send a zero-valued list separator. Keep the original
+	// fixture for decoding, but expect the canonical 0xff separator on output.
 	src, err := hex.DecodeString("0101010201000000020102030100040100")
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	var v VideoCodecParams
-	err = Unmarshal(src, &v)
-	require.Nil(t, err)
+	require.NoError(t, Unmarshal(src, &v))
+	require.Equal(t, VideoCodecParams{
+		ProfileID:         []byte{1},
+		Level:             []byte{0, 2},
+		PacketizationMode: 0,
+		CVOEnabled:        []byte{0},
+	}, v)
 
 	dst, err := Marshal(v)
-	require.Nil(t, err)
-
-	require.Equal(t, src, dst)
+	require.NoError(t, err)
+	require.Equal(t, "010101020100ff00020102030100040100", hex.EncodeToString(dst))
 }
 
 func TestInterface(t *testing.T) {

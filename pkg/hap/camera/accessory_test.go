@@ -1,8 +1,6 @@
 package camera
 
 import (
-	"encoding/base64"
-	"strings"
 	"testing"
 
 	"github.com/AlexxIT/go2rtc/pkg/hap"
@@ -10,19 +8,18 @@ import (
 )
 
 func TestNilCharacter(t *testing.T) {
-	var res SetupEndpoints
+	var res SetupEndpointsResponse
 	char := &hap.Character{}
 	err := char.ReadTLV8(&res)
-	require.NotNil(t, err)
-	require.NotNil(t, strings.Contains(err.Error(), "can't read value"))
+	require.ErrorContains(t, err, "can't read value")
 }
 
 type testTLV8 struct {
-	name    string
-	value   string
-	actual  any
-	expect  any
-	noequal bool
+	name      string
+	value     string
+	actual    any
+	expect    any
+	canonical string // expected output when a captured device uses a legacy separator
 }
 
 func (test testTLV8) run(t *testing.T) {
@@ -40,14 +37,11 @@ func (test testTLV8) run(t *testing.T) {
 	err = dst.Write(test.actual)
 	require.Nil(t, err)
 
-	a, _ := base64.StdEncoding.DecodeString(test.value)
-	b, _ := base64.StdEncoding.DecodeString(dst.Value.(string))
-	t.Logf("%x\n", a)
-	t.Logf("%x\n", b)
-
-	if !test.noequal {
-		require.Equal(t, test.value, dst.Value)
+	encoded := test.canonical
+	if encoded == "" {
+		encoded = test.value
 	}
+	require.Equal(t, encoded, dst.Value)
 }
 
 func TestAqaraG3(t *testing.T) {
@@ -61,9 +55,10 @@ func TestAqaraG3(t *testing.T) {
 			},
 		},
 		{
-			name:   "114",
-			value:  "AaoBAQACEQEBAQIBAAAAAgECAwEABAEAAwsBAoAHAgI4BAMBHgAAAwsBAgAFAgLQAgMBHgAAAwsBAoACAgJoAQMBHgAAAwsBAuABAgIOAQMBHgAAAwsBAkABAgK0AAMBHgAAAwsBAgAFAgLAAwMBHgAAAwsBAgAEAgIAAwMBHgAAAwsBAoACAgLgAQMBHgAAAwsBAuABAgJoAQMBHgAAAwsBAkABAgLwAAMBHg==",
-			actual: &SupportedVideoStreamConfiguration{},
+			name:      "114",
+			value:     "AaoBAQACEQEBAQIBAAAAAgECAwEABAEAAwsBAoAHAgI4BAMBHgAAAwsBAgAFAgLQAgMBHgAAAwsBAoACAgJoAQMBHgAAAwsBAuABAgIOAQMBHgAAAwsBAkABAgK0AAMBHgAAAwsBAgAFAgLAAwMBHgAAAwsBAgAEAgIAAwMBHgAAAwsBAoACAgLgAQMBHgAAAwsBAuABAgJoAQMBHgAAAwsBAkABAgLwAAMBHg==",
+			canonical: "AaoBAQACEQEBAQIBAP8AAgECAwEABAEAAwsBAoAHAgI4BAMBHv8AAwsBAgAFAgLQAgMBHv8AAwsBAoACAgJoAQMBHv8AAwsBAuABAgIOAQMBHv8AAwsBAkABAgK0AAMBHv8AAwsBAgAFAgLAAwMBHv8AAwsBAgAEAgIAAwMBHv8AAwsBAoACAgLgAQMBHv8AAwsBAuABAgJoAQMBHv8AAwsBAkABAgLwAAMBHg==",
+			actual:    &SupportedVideoStreamConfiguration{},
 			expect: &SupportedVideoStreamConfiguration{
 				Codecs: []VideoCodecConfiguration{
 					{
@@ -112,9 +107,10 @@ func TestAqaraG3(t *testing.T) {
 			},
 		},
 		{
-			name:   "116",
-			value:  "AgEAAAACAQEAAAIBAg==",
-			actual: &SupportedRTPConfiguration{},
+			name:      "116",
+			value:     "AgEAAAACAQEAAAIBAg==",
+			canonical: "AgEA/wACAQH/AAIBAg==",
+			actual:    &SupportedRTPConfiguration{},
 			expect: &SupportedRTPConfiguration{
 				SRTPCryptoType: []byte{CryptoAES_CM_128_HMAC_SHA1_80, CryptoAES_CM_256_HMAC_SHA1_80, CryptoDisabled},
 			},
@@ -128,9 +124,10 @@ func TestAqaraG3(t *testing.T) {
 func TestHomebridge(t *testing.T) {
 	tests := []testTLV8{
 		{
-			name:   "114",
-			value:  "AcUBAQACHQEBAAAAAQEBAAABAQICAQAAAAIBAQAAAgECAwEAAwsBAkABAgK0AAMBHgAAAwsBAkABAgLwAAMBDwAAAwsBAkABAgLwAAMBHgAAAwsBAuABAgIOAQMBHgAAAwsBAuABAgJoAQMBHgAAAwsBAoACAgJoAQMBHgAAAwsBAoACAgLgAQMBHgAAAwsBAgAFAgLQAgMBHgAAAwsBAgAFAgLAAwMBHgAAAwsBAoAHAgI4BAMBHgAAAwsBAkAGAgKwBAMBHg==",
-			actual: &SupportedVideoStreamConfiguration{},
+			name:      "114",
+			value:     "AcUBAQACHQEBAAAAAQEBAAABAQICAQAAAAIBAQAAAgECAwEAAwsBAkABAgK0AAMBHgAAAwsBAkABAgLwAAMBDwAAAwsBAkABAgLwAAMBHgAAAwsBAuABAgIOAQMBHgAAAwsBAuABAgJoAQMBHgAAAwsBAoACAgJoAQMBHgAAAwsBAoACAgLgAQMBHgAAAwsBAgAFAgLQAgMBHgAAAwsBAgAFAgLAAwMBHgAAAwsBAoAHAgI4BAMBHgAAAwsBAkAGAgKwBAMBHg==",
+			canonical: "AcUBAQACHQEBAP8AAQEB/wABAQICAQD/AAIBAf8AAgECAwEAAwsBAkABAgK0AAMBHv8AAwsBAkABAgLwAAMBD/8AAwsBAkABAgLwAAMBHv8AAwsBAuABAgIOAQMBHv8AAwsBAuABAgJoAQMBHv8AAwsBAoACAgJoAQMBHv8AAwsBAoACAgLgAQMBHv8AAwsBAgAFAgLQAgMBHv8AAwsBAgAFAgLAAwMBHv8AAwsBAoAHAgI4BAMBHv8AAwsBAkAGAgKwBAMBHg==",
+			actual:    &SupportedVideoStreamConfiguration{},
 			expect: &SupportedVideoStreamConfiguration{
 				Codecs: []VideoCodecConfiguration{
 					{
@@ -176,9 +173,10 @@ func TestHomebridge(t *testing.T) {
 func TestScrypted(t *testing.T) {
 	tests := []testTLV8{
 		{
-			name:   "114",
-			value:  "AVIBAQACEwEBAQIBAAAAAgEBAAACAQIDAQADCwECAA8CAnAIAwEeAAADCwECgAcCAjgEAwEeAAADCwECAAUCAtACAwEeAAADCwECQAECAvAAAwEP",
-			actual: &SupportedVideoStreamConfiguration{},
+			name:      "114",
+			value:     "AVIBAQACEwEBAQIBAAAAAgEBAAACAQIDAQADCwECAA8CAnAIAwEeAAADCwECgAcCAjgEAwEeAAADCwECAAUCAtACAwEeAAADCwECQAECAvAAAwEP",
+			canonical: "AVIBAQACEwEBAQIBAP8AAgEB/wACAQIDAQADCwECAA8CAnAIAwEe/wADCwECgAcCAjgEAwEe/wADCwECAAUCAtACAwEe/wADCwECQAECAvAAAwEP",
+			actual:    &SupportedVideoStreamConfiguration{},
 			expect: &SupportedVideoStreamConfiguration{
 				Codecs: []VideoCodecConfiguration{
 					{
@@ -200,9 +198,10 @@ func TestScrypted(t *testing.T) {
 			},
 		},
 		{
-			name:   "115",
-			value:  "AScBAQMCIgEBAQIBAAMBAAAAAwEAAAADAQEAAAMBAQAAAwECAAADAQICAQA=",
-			actual: &SupportedAudioStreamConfiguration{},
+			name:      "115",
+			value:     "AScBAQMCIgEBAQIBAAMBAAAAAwEAAAADAQEAAAMBAQAAAwECAAADAQICAQA=",
+			canonical: "AScBAQMCIgEBAQIBAAMBAP8AAwEA/wADAQH/AAMBAf8AAwEC/wADAQICAQA=",
+			actual:    &SupportedAudioStreamConfiguration{},
 			expect: &SupportedAudioStreamConfiguration{
 				Codecs: []AudioCodecConfiguration{
 					{
@@ -224,9 +223,10 @@ func TestScrypted(t *testing.T) {
 			},
 		},
 		{
-			name:   "116",
-			value:  "AgEAAAACAQI=",
-			actual: &SupportedRTPConfiguration{},
+			name:      "116",
+			value:     "AgEAAAACAQI=",
+			canonical: "AgEA/wACAQI=",
+			actual:    &SupportedRTPConfiguration{},
 			expect: &SupportedRTPConfiguration{
 				SRTPCryptoType: []byte{CryptoAES_CM_128_HMAC_SHA1_80, CryptoDisabled},
 			},
