@@ -49,6 +49,33 @@ onvif:
 
 Note that some ONVIF clients require the RTSP username and password to be the same.
 
+### Separate local management listener
+
+On the `eve-full` fork, set `management_listen` to serve the full WebUI and
+API on a numeric loopback address with HTTP Basic auth on every request.
+Remote operators can forward that port over SSH and open it at `localhost`.
+
+```yaml
+api:
+  listen: ":1984"
+  username: "${GO2RTC_API_USER}"
+  password: "${GO2RTC_API_PASSWORD}"
+  management_listen: "127.0.0.1:1985"
+  protocol_peers:
+    onvif: ["192.0.2.40"]
+    homekit_control:
+      peer: "198.51.100.18"
+      stream: eve
+```
+
+With this option enabled, `listen`, `tls_listen`, and `unix_listen` serve a
+restricted HTTP handler. HAP pairing requests retain their HomeKit auth. The
+configured ONVIF peers can use authenticated SOAP, event subscriptions and
+snapshots of existing streams. The configured HomeKit control peer can send
+GET and PUT requests for the named stream with `homekit_client.token` as a
+Bearer credential. Each source check uses the direct connection address.
+RTSP, SRTP, WebRTC media and mDNS have their own listeners and configuration.
+
 **PS:**
 
 - MJPEG over WebSocket plays better than native MJPEG because Chrome [bug](https://bugs.chromium.org/p/chromium/issues/detail?id=527446)

@@ -57,7 +57,7 @@ func Init() {
 	api.HandleFunc("/onvif/", onvifDeviceService)
 
 	// snapshots with the ONVIF auth (API auth doesn't cover the /onvif/ path)
-	api.HandleFunc(pathSnapshot, onvifSnapshot)
+	api.HandleFunc(api.ONVIFSnapshotPath, onvifSnapshot)
 
 	// ONVIF client autodiscovery
 	api.HandleFunc("api/onvif", apiOnvif)
@@ -95,6 +95,11 @@ func streamOnvif(rawURL string) (core.Producer, error) {
 }
 
 func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
+	protocolRequest := api.IsProtocolRequest(r)
+	if protocolRequest && (authUsername == "" || authPassword == "") {
+		http.Error(w, "ONVIF credentials required", http.StatusServiceUnavailable)
+		return
+	}
 	b, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -215,6 +220,10 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 		b = onvif.GetDeviceInformationResponse("", "go2rtc", app.Version, r.Host)
 
 	case onvif.DeviceSystemReboot:
+		if protocolRequest {
+			http.Error(w, "unsupported operation", http.StatusBadRequest)
+			return
+		}
 		b = onvif.StaticResponse(operation)
 
 		time.AfterFunc(time.Second, func() {
@@ -253,7 +262,7 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 		// clients fetch the snapshot with the ONVIF username and password
 		path := "/api/frame.jpeg"
 		if authUsername != "" {
-			path = pathSnapshot
+			path = api.ONVIFSnapshotPath
 		}
 		uri := "http://" + r.Host + path + "?src=" + onvif.FindTagValue(b, "ProfileToken")
 		b = onvif.GetSnapshotUriResponse(uri)
@@ -379,11 +388,14 @@ func apiMotion(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-const pathSnapshot = "/onvif/snapshot.jpeg"
-
 // onvifSnapshot - the same as api/frame.jpeg, but with the ONVIF username and
 // password (HTTP Digest or Basic) instead of the API auth.
 func onvifSnapshot(w http.ResponseWriter, r *http.Request) {
+	protocolRequest := api.IsProtocolRequest(r)
+	if protocolRequest && (authUsername == "" || authPassword == "") {
+		http.Error(w, "ONVIF credentials required", http.StatusServiceUnavailable)
+		return
+	}
 	if authUsername != "" && !onvif.CheckHTTPAuth(r, authUsername, authPassword, time.Now()) {
 		onvif.RequireHTTPAuth(w, time.Now())
 		return
@@ -391,6 +403,10 @@ func onvifSnapshot(w http.ResponseWriter, r *http.Request) {
 
 	r2 := r.Clone(r.Context())
 	r2.URL.Path = "/api/frame.jpeg"
+	if protocolRequest {
+		src := r.URL.Query().Get("src")
+		r2.URL.RawQuery = url.Values{"src": {src}}.Encode()
+	}
 	r2.RequestURI = r2.URL.RequestURI()
 
 	handler, pattern := http.DefaultServeMux.Handler(r2)

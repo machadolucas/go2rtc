@@ -36,7 +36,9 @@ func Init() {
 			TLSKey     string `yaml:"tls_key"`
 			UnixListen string `yaml:"unix_listen"`
 
-			AllowPaths []string `yaml:"allow_paths"`
+			AllowPaths       []string      `yaml:"allow_paths"`
+			ManagementListen string        `yaml:"management_listen"`
+			ProtocolPeers    protocolPeers `yaml:"protocol_peers"`
 		} `yaml:"api"`
 	}
 
@@ -46,7 +48,7 @@ func Init() {
 	// load config from YAML
 	app.LoadConfig(&cfg)
 
-	if cfg.Mod.Listen == "" && cfg.Mod.UnixListen == "" && cfg.Mod.TLSListen == "" {
+	if cfg.Mod.Listen == "" && cfg.Mod.UnixListen == "" && cfg.Mod.TLSListen == "" && cfg.Mod.ManagementListen == "" {
 		return
 	}
 
@@ -68,7 +70,21 @@ func Init() {
 		Handler = middlewareCORS(Handler) // 3rd
 	}
 
-	if cfg.Mod.Username != "" {
+	var management http.Handler
+	if cfg.Mod.ManagementListen != "" {
+		if cfg.Mod.Username == "" || cfg.Mod.Password == "" {
+			log.Fatal().Msg("[api] management_listen requires a username and password")
+		}
+		if !loopbackListener(cfg.Mod.ManagementListen) {
+			log.Fatal().Msg("[api] management_listen requires a numeric loopback address and fixed port")
+		}
+		var err error
+		Handler, err = protocolHandler(cfg.Mod.ProtocolPeers, http.DefaultServeMux)
+		if err != nil {
+			log.Fatal().Err(err).Msg("[api] invalid protocol_peers")
+		}
+		management = managementHandler(cfg.Mod.Username, cfg.Mod.Password, http.DefaultServeMux)
+	} else if cfg.Mod.Username != "" {
 		Handler = middlewareAuth(cfg.Mod.Username, cfg.Mod.Password, cfg.Mod.LocalAuth, Handler) // 2nd
 	}
 
@@ -79,12 +95,15 @@ func Init() {
 	if cfg.Mod.Listen != "" {
 		_, port, _ := net.SplitHostPort(cfg.Mod.Listen)
 		Port, _ = strconv.Atoi(port)
-		go listen("tcp", cfg.Mod.Listen)
+		go listen("tcp", cfg.Mod.Listen, Handler)
 	}
 
 	if cfg.Mod.UnixListen != "" {
 		_ = syscall.Unlink(cfg.Mod.UnixListen)
-		go listen("unix", cfg.Mod.UnixListen)
+		go listen("unix", cfg.Mod.UnixListen, Handler)
+	}
+	if management != nil {
+		go listen("tcp", cfg.Mod.ManagementListen, management)
 	}
 
 	// Initialize the HTTPS server
@@ -93,7 +112,7 @@ func Init() {
 	}
 }
 
-func listen(network, address string) {
+func listen(network, address string, handler http.Handler) {
 	ln, err := net.Listen(network, address)
 	if err != nil {
 		log.Error().Err(err).Msg("[api] listen")
@@ -103,7 +122,7 @@ func listen(network, address string) {
 	log.Info().Str("addr", address).Msg("[api] listen")
 
 	server := http.Server{
-		Handler:           Handler,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second, // Example: Set to 5 seconds
 	}
 	if err = server.Serve(ln); err != nil {
@@ -213,10 +232,7 @@ func isLoopback(remoteAddr string) bool {
 }
 
 func middlewareAuth(username, password string, localAuth bool, next http.Handler) http.Handler {
-	// We use ConstantTimeCompare and Sum256 to prevent an attacker from guessing the password length.
-	// https://github.com/AlexxIT/go2rtc/pull/2693
-	credentials := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
-	wantAuthHash := sha256.Sum256([]byte("Basic " + credentials))
+	auth := requireBasicAuth(username, password, next)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// ONVIF has its own auth (WS-Security UsernameToken) and HomeKit
@@ -232,14 +248,25 @@ func middlewareAuth(username, password string, localAuth bool, next http.Handler
 		}
 
 		if localAuth || !isLoopback(r.RemoteAddr) {
-			gotAuthHash := sha256.Sum256([]byte(r.Header.Get("Authorization")))
-			if subtle.ConstantTimeCompare(gotAuthHash[:], wantAuthHash[:]) != 1 {
-				w.Header().Set("Www-Authenticate", `Basic realm="go2rtc"`)
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
-				return
-			}
+			auth.ServeHTTP(w, r)
+			return
 		}
 
+		next.ServeHTTP(w, r)
+	})
+}
+
+func requireBasicAuth(username, password string, next http.Handler) http.Handler {
+	// Compare fixed-length digests to avoid leaking credential length.
+	credentials := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
+	want := sha256.Sum256([]byte("Basic " + credentials))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got := sha256.Sum256([]byte(r.Header.Get("Authorization")))
+		if subtle.ConstantTimeCompare(got[:], want[:]) != 1 {
+			w.Header().Set("Www-Authenticate", `Basic realm="go2rtc"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
 		next.ServeHTTP(w, r)
 	})
 }
