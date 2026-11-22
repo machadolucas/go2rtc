@@ -55,24 +55,20 @@ func GetRequestAction(b []byte) string {
 	return string(m[1])
 }
 
-func GetCapabilitiesResponse(host string, events bool) []byte {
+func GetCapabilitiesResponse(host string) []byte {
 	e := NewEnvelope()
 	e.Appendf(`<tds:GetCapabilitiesResponse>
 	<tds:Capabilities>
 		<tt:Device>
 			<tt:XAddr>http://%s/onvif/device_service</tt:XAddr>
 		</tt:Device>
-`, host)
-	if events {
-		e.Appendf(`		<tt:Events>
-			<tt:XAddr>http://%s%s</tt:XAddr>
+		<tt:Events>
+			<tt:XAddr>http://%s/onvif/events_service</tt:XAddr>
 			<tt:WSSubscriptionPolicySupport>false</tt:WSSubscriptionPolicySupport>
 			<tt:WSPullPointSupport>true</tt:WSPullPointSupport>
 			<tt:WSPausableSubscriptionManagerInterfaceSupport>false</tt:WSPausableSubscriptionManagerInterfaceSupport>
 		</tt:Events>
-`, host, PathEvents)
-	}
-	e.Appendf(`		<tt:Media>
+		<tt:Media>
 			<tt:XAddr>http://%s/onvif/media_service</tt:XAddr>
 			<tt:StreamingCapabilities>
 				<tt:RTPMulticast>false</tt:RTPMulticast>
@@ -81,11 +77,11 @@ func GetCapabilitiesResponse(host string, events bool) []byte {
 			</tt:StreamingCapabilities>
 		</tt:Media>
 	</tds:Capabilities>
-</tds:GetCapabilitiesResponse>`, host)
+</tds:GetCapabilitiesResponse>`, host, host, host)
 	return e.Bytes()
 }
 
-func GetServicesResponse(host string, events bool) []byte {
+func GetServicesResponse(host string) []byte {
 	e := NewEnvelope()
 	e.Appendf(`<tds:GetServicesResponse>
 	<tds:Service>
@@ -97,17 +93,13 @@ func GetServicesResponse(host string, events bool) []byte {
 		<tds:Namespace>http://www.onvif.org/ver10/media/wsdl</tds:Namespace>
 		<tds:XAddr>http://%s/onvif/media_service</tds:XAddr>
 		<tds:Version><tt:Major>2</tt:Major><tt:Minor>5</tt:Minor></tds:Version>
-	</tds:Service>`, host, host)
-	if events {
-		e.Appendf(`
+	</tds:Service>
 	<tds:Service>
 		<tds:Namespace>http://www.onvif.org/ver10/events/wsdl</tds:Namespace>
-		<tds:XAddr>http://%s%s</tds:XAddr>
+		<tds:XAddr>http://%s/onvif/events_service</tds:XAddr>
 		<tds:Version><tt:Major>2</tt:Major><tt:Minor>5</tt:Minor></tds:Version>
-	</tds:Service>`, host, PathEvents)
-	}
-	e.Append(`
-</tds:GetServicesResponse>`)
+	</tds:Service>
+</tds:GetServicesResponse>`, host, host, host)
 	return e.Bytes()
 }
 
@@ -357,6 +349,9 @@ var responses = map[string]string{
 		<trt:StreamingCapabilities RTPMulticast="false" RTP_TCP="false" RTP_RTSP_TCP="true" NonAggregateControl="false" NoRTSPStreaming="false" />
 	</trt:Capabilities>
 </trt:GetServiceCapabilitiesResponse>`,
+	EventsGetServiceCapabilities: `<tev:GetServiceCapabilitiesResponse xmlns:tev="http://www.onvif.org/ver10/events/wsdl">
+	<tev:Capabilities WSSubscriptionPolicySupport="false" WSPullPointSupport="true" WSPausableSubscriptionManagerInterfaceSupport="false" MaxNotificationProducers="0" MaxPullPoints="16" PersistentNotificationStorage="false" />
+</tev:GetServiceCapabilitiesResponse>`,
 
 	DeviceGetDiscoveryMode:         `<tds:GetDiscoveryModeResponse><tds:DiscoveryMode>Discoverable</tds:DiscoveryMode></tds:GetDiscoveryModeResponse>`,
 	DeviceGetDNS:                   `<tds:GetDNSResponse><tds:DNSInformation /></tds:GetDNSResponse>`,

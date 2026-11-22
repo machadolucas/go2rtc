@@ -1,6 +1,9 @@
 package onvif
 
 import (
+	"context"
+	"encoding/xml"
+	"errors"
 	"regexp"
 	"strconv"
 	"strings"
@@ -10,12 +13,15 @@ import (
 	"github.com/AlexxIT/go2rtc/pkg/core"
 )
 
-// ONVIF Events service, PullPoint only (the only mechanism used by UniFi
-// Protect, Scrypted and Home Assistant). Supports the motion topics:
+// ONVIF Events service, PullPoint only (WS-BaseNotification push and
+// the pausable subscription manager are not supported). Supports the motion topics:
 //   - tns1:RuleEngine/CellMotionDetector/Motion (IsMotion)
 //   - tns1:VideoSource/MotionAlarm (State)
 
 const (
+	// EventsGetServiceCapabilities - GetServiceCapabilities of the Events service,
+	// the operation name is the same as in the Media service, so the key is different
+	EventsGetServiceCapabilities      = "EventsGetServiceCapabilities"
 	EventsGetEventProperties          = "GetEventProperties"
 	EventsCreatePullPointSubscription = "CreatePullPointSubscription"
 	EventsPullMessages                = "PullMessages"
@@ -35,7 +41,7 @@ const (
 	subscriptionTTLMin     = 10 * time.Second
 	subscriptionTTLDefault = 60 * time.Second
 	subscriptionTTLMax     = time.Hour
-	subscriptionsMax       = 16
+	subscriptionsMax       = 16 // same as MaxPullPoints in EventsGetServiceCapabilities
 	queueMax               = 64
 	pullTimeoutMax         = time.Minute
 )
@@ -54,10 +60,12 @@ type subscription struct {
 	wake    chan struct{} // closed and replaced on a new message
 }
 
+var ErrUnknownSubscription = errors.New("onvif: unknown subscription")
+
 // Events is a thread safe storage for motion states and PullPoint subscriptions.
 type Events struct {
 	mu     sync.Mutex
-	tokens []string        // source tokens in the order of creation
+	tokens []string        // source tokens in the order of the first state
 	states map[string]bool // source token => motion
 	subs   map[string]*subscription
 }
@@ -66,27 +74,15 @@ func NewEvents() *Events {
 	return &Events{states: map[string]bool{}, subs: map[string]*subscription{}}
 }
 
-// AddSource registers a source (go2rtc stream name), which can report motion.
-func (e *Events) AddSource(token string) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	if _, ok := e.states[token]; !ok {
-		e.tokens = append(e.tokens, token)
-		e.states[token] = false
-	}
-}
-
-func (e *Events) HasSources() bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return len(e.tokens) > 0
-}
-
-// SetMotion changes the state of the source and notifies all subscribers.
+// SetMotion changes the state of the source (go2rtc stream name) and notifies
+// all subscribers. A source is known from its first state.
 func (e *Events) SetMotion(token string, motion bool) {
+	now := time.Now()
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
+	e.gc(now)
 
 	state, ok := e.states[token]
 	if !ok {
@@ -96,7 +92,7 @@ func (e *Events) SetMotion(token string, motion bool) {
 	}
 	e.states[token] = motion
 
-	msg := eventMessage{token: token, motion: motion, operation: "Changed", time: time.Now()}
+	msg := eventMessage{token: token, motion: motion, operation: "Changed", time: now}
 	for _, sub := range e.subs {
 		sub.push(msg)
 	}
@@ -107,14 +103,28 @@ func (s *subscription) push(msg eventMessage) {
 		s.queue = s.queue[1:]
 	}
 	s.queue = append(s.queue, msg)
+	s.notify()
+}
+
+// notify wakes up all pending Pull calls of the subscription
+func (s *subscription) notify() {
 	close(s.wake)
 	s.wake = make(chan struct{})
+}
+
+// remove deletes the subscription and wakes up its pending Pull calls,
+// so they return an unknown subscription instead of waiting for the timeout
+func (e *Events) remove(id string) {
+	if sub := e.subs[id]; sub != nil {
+		delete(e.subs, id)
+		close(sub.wake)
+	}
 }
 
 func (e *Events) gc(now time.Time) {
 	for id, sub := range e.subs {
 		if now.After(sub.expires) {
-			delete(e.subs, id)
+			e.remove(id)
 		}
 	}
 }
@@ -172,8 +182,7 @@ func (e *Events) Sync(id string) bool {
 		return false
 	}
 	sub.sync(e, time.Now())
-	close(sub.wake)
-	sub.wake = make(chan struct{})
+	sub.notify()
 	return true
 }
 
@@ -199,13 +208,14 @@ func (e *Events) Unsubscribe(id string) bool {
 	if e.subs[id] == nil {
 		return false
 	}
-	delete(e.subs, id)
+	e.remove(id)
 	return true
 }
 
 // Pull waits for messages up to the timeout. The response is ready to send.
-// Returns nil for an unknown (or expired) subscription.
-func (e *Events) Pull(id string, timeout time.Duration, limit int) []byte {
+// Returns ErrUnknownSubscription for an unknown (or expired) subscription and
+// the context error if the context is done (ex. the client disconnected).
+func (e *Events) Pull(ctx context.Context, id string, timeout time.Duration, limit int) ([]byte, error) {
 	if timeout > pullTimeoutMax {
 		timeout = pullTimeoutMax
 	}
@@ -224,7 +234,7 @@ func (e *Events) Pull(id string, timeout time.Duration, limit int) []byte {
 		sub := e.subs[id]
 		if sub == nil {
 			e.mu.Unlock()
-			return nil
+			return nil, ErrUnknownSubscription
 		}
 
 		// a pull keeps the subscription alive for the time of the request
@@ -240,7 +250,7 @@ func (e *Events) Pull(id string, timeout time.Duration, limit int) []byte {
 			sub.queue = sub.queue[n:]
 			expires := sub.expires
 			e.mu.Unlock()
-			return pullMessagesResponse(now, expires, msgs)
+			return pullMessagesResponse(now, expires, msgs), nil
 		}
 
 		wake := sub.wake
@@ -250,13 +260,22 @@ func (e *Events) Pull(id string, timeout time.Duration, limit int) []byte {
 		select {
 		case <-wake:
 		case <-deadline.C:
-			return pullMessagesResponse(time.Now(), expires, nil)
+			return pullMessagesResponse(time.Now(), expires, nil), nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
 	}
 }
 
 func formatTime(t time.Time) string {
 	return t.UTC().Format("2006-01-02T15:04:05Z")
+}
+
+// escape a string for XML text and attribute values (stream names come from the config)
+func escape(s string) string {
+	var b strings.Builder
+	_ = xml.EscapeText(&b, []byte(s))
+	return b.String()
 }
 
 func pullMessagesResponse(now, expires time.Time, msgs []eventMessage) []byte {
@@ -266,6 +285,7 @@ func pullMessagesResponse(now, expires time.Time, msgs []eventMessage) []byte {
 	<tev:TerminationTime>%s</tev:TerminationTime>`, eventsNS, formatTime(now), formatTime(expires))
 	for _, msg := range msgs {
 		ts := formatTime(msg.time)
+		token := escape(msg.token)
 		e.Appendf(`
 	<wsnt:NotificationMessage>
 		<wsnt:Topic Dialect="%s">tns1:RuleEngine/CellMotionDetector/Motion</wsnt:Topic>
@@ -289,8 +309,8 @@ func pullMessagesResponse(now, expires time.Time, msgs []eventMessage) []byte {
 			</tt:Message>
 		</wsnt:Message>
 	</wsnt:NotificationMessage>`,
-			topicDialect, ts, msg.operation, msg.token, msg.token, msg.motion,
-			topicDialect, ts, msg.operation, msg.token, msg.motion)
+			topicDialect, ts, msg.operation, token, token, msg.motion,
+			topicDialect, ts, msg.operation, token, msg.motion)
 	}
 	e.Append(`
 </tev:PullMessagesResponse>`)
@@ -304,7 +324,7 @@ func CreatePullPointSubscriptionResponse(host, id string, expires time.Time) []b
 	<wsnt:CurrentTime>%s</wsnt:CurrentTime>
 	<wsnt:TerminationTime>%s</wsnt:TerminationTime>
 </tev:CreatePullPointSubscriptionResponse>`,
-		eventsNS, host, PathSubscription, id, formatTime(time.Now()), formatTime(expires))
+		eventsNS, escape(host), PathSubscription, escape(id), formatTime(time.Now()), formatTime(expires))
 	return e.Bytes()
 }
 
@@ -326,14 +346,6 @@ func UnsubscribeResponse() []byte {
 func SetSynchronizationPointResponse() []byte {
 	e := NewEnvelope()
 	e.Appendf(`<tev:SetSynchronizationPointResponse%s />`, eventsNS)
-	return e.Bytes()
-}
-
-func EventsServiceCapabilitiesResponse() []byte {
-	e := NewEnvelope()
-	e.Appendf(`<tev:GetServiceCapabilitiesResponse%s>
-	<tev:Capabilities WSSubscriptionPolicySupport="false" WSPullPointSupport="true" WSPausableSubscriptionManagerInterfaceSupport="false" MaxNotificationProducers="0" MaxPullPoints="%d" PersistentNotificationStorage="false" />
-</tev:GetServiceCapabilitiesResponse>`, eventsNS, subscriptionsMax)
 	return e.Bytes()
 }
 
