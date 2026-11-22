@@ -187,6 +187,17 @@ func HandleFunc(pattern string, handler http.HandlerFunc) {
 	http.HandleFunc(pattern, handler)
 }
 
+func HandleFuncNoAuth(pattern string, handler http.HandlerFunc) {
+	// TODO: rewrite to Go 1.22+
+	// mux := http.NewServeMux()
+	// mux.HandleFunc("GET /onvif/", ...)
+	// private := http.NewServeMux()
+	// mux.HandleFunc("GET /api", ...)
+	// mux.Handle("/api/", middlewareAuth(private))
+	noauthPrefixes = append(noauthPrefixes, pattern)
+	HandleFunc(pattern, handler)
+}
+
 // ResponseJSON important always add Content-Type
 // so go won't need to call http.DetectContentType
 func ResponseJSON(w http.ResponseWriter, v any) {
@@ -231,13 +242,25 @@ func isLoopback(remoteAddr string) bool {
 	return strings.HasPrefix(remoteAddr, "127.") || strings.HasPrefix(remoteAddr, "[::1]") || remoteAddr == "@"
 }
 
+var noauthPrefixes []string
+
 func middlewareAuth(username, password string, localAuth bool, next http.Handler) http.Handler {
 	auth := requireBasicAuth(username, password, next)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Paths registered with HandleFuncNoAuth have their own auth.
+		for _, prefix := range noauthPrefixes {
+			if strings.HasPrefix(r.URL.Path, prefix) {
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+
 		// ONVIF has its own auth (WS-Security UsernameToken) and HomeKit
 		// (HAP) has its own pairing and encryption. Their clients never
-		// send the Basic auth.
+		// send the Basic auth. ONVIF is also registered with
+		// HandleFuncNoAuth; the fixed list keeps this middleware
+		// independent of registration order.
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/onvif/"), r.URL.Path == "/pair-setup", r.URL.Path == "/pair-verify":
 			next.ServeHTTP(w, r)

@@ -25,14 +25,29 @@ func Init() {
 
 	var cfg struct {
 		Mod struct {
+			Audio bool `yaml:"audio"`
+		} `yaml:"onvif"`
+		API struct {
 			Username string `yaml:"username"`
 			Password string `yaml:"password"`
-			Audio    bool   `yaml:"audio"`
-		} `yaml:"onvif"`
+		} `yaml:"api"`
+		RTSP struct {
+			Username string `yaml:"username"`
+			Password string `yaml:"password"`
+		} `yaml:"rtsp"`
 	}
 	app.LoadConfig(&cfg)
-	authUsername = cfg.Mod.Username
-	authPassword = cfg.Mod.Password
+
+	// ONVIF auth: RTSP credentials, else API credentials. The same login is
+	// used for the snapshot endpoint and by clients for the RTSP stream.
+	if cfg.RTSP.Username != "" {
+		authUsername, authPassword = cfg.RTSP.Username, cfg.RTSP.Password
+	} else if cfg.API.Username != "" {
+		authUsername, authPassword = cfg.API.Username, cfg.API.Password
+	}
+	if authUsername != "" {
+		auth = onvif.NewAuth(authUsername, authPassword)
+	}
 	audio = cfg.Mod.Audio
 
 	streams.HandleFunc("onvif", streamOnvif)
@@ -54,19 +69,20 @@ func Init() {
 	api.HandleFunc("api/onvif/motion", apiMotion)
 
 	// ONVIF server on all suburls
-	api.HandleFunc("/onvif/", onvifDeviceService)
+	api.HandleFuncNoAuth("/onvif/", onvifDeviceService)
 
-	// snapshots with the ONVIF auth (API auth doesn't cover the /onvif/ path)
-	api.HandleFunc(api.ONVIFSnapshotPath, onvifSnapshot)
+	// snapshots with the ONVIF auth (HTTP Digest or Basic), not the API auth
+	api.HandleFuncNoAuth(api.ONVIFSnapshotPath, onvifSnapshot)
 
 	// ONVIF client autodiscovery
 	api.HandleFunc("api/onvif", apiOnvif)
 }
 
 var log zerolog.Logger
-var events = onvif.NewEvents()
+var auth *onvif.Auth
 var authUsername string
 var authPassword string
+var events = onvif.NewEvents()
 var audio bool // advertise AAC audio in the profiles
 
 func streamOnvif(rawURL string) (core.Producer, error) {
@@ -114,14 +130,22 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 
 	log.Trace().Msgf("[onvif] server request %s %s:\n%s", r.Method, r.RequestURI, b)
 
-	if authUsername != "" && operation != onvif.DeviceGetSystemDateAndTime {
-		if !onvif.ValidateUsernameToken(b, authUsername, authPassword, time.Now(), onvif.DefaultUsernameTokenAge) {
-			log.Debug().Str("addr", r.RemoteAddr).Str("operation", operation).Msg("[onvif] auth failed")
-			// SOAP fault should have HTTP status 400, important for UniFi Protect
-			w.Header().Set("Content-Type", "application/soap+xml; charset=utf-8")
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write(onvif.NotAuthorizedResponse())
-			return
+	if auth != nil {
+		switch operation {
+		case onvif.DeviceGetSystemDateAndTime:
+		case onvif.DeviceGetServices:
+		case onvif.DeviceGetCapabilities:
+		case onvif.ServiceGetServiceCapabilities:
+		case onvif.DeviceGetHostname:
+		default:
+			if !auth.Validate(b) {
+				log.Debug().Str("addr", r.RemoteAddr).Str("operation", operation).Msg("[onvif] auth failed")
+				// SOAP fault should have HTTP status 400, important for UniFi Protect
+				w.Header().Set("Content-Type", "application/soap+xml; charset=utf-8")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write(onvif.NotAuthorizedResponse())
+				return
+			}
 		}
 	}
 
@@ -261,7 +285,7 @@ func onvifDeviceService(w http.ResponseWriter, r *http.Request) {
 	case onvif.MediaGetSnapshotUri:
 		// clients fetch the snapshot with the ONVIF username and password
 		path := "/api/frame.jpeg"
-		if authUsername != "" {
+		if auth != nil {
 			path = api.ONVIFSnapshotPath
 		}
 		uri := "http://" + r.Host + path + "?src=" + onvif.FindTagValue(b, "ProfileToken")
@@ -396,7 +420,7 @@ func onvifSnapshot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "ONVIF credentials required", http.StatusServiceUnavailable)
 		return
 	}
-	if authUsername != "" && !onvif.CheckHTTPAuth(r, authUsername, authPassword, time.Now()) {
+	if auth != nil && !onvif.CheckHTTPAuth(r, authUsername, authPassword, time.Now()) {
 		onvif.RequireHTTPAuth(w, time.Now())
 		return
 	}
