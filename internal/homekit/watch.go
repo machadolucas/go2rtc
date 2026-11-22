@@ -19,6 +19,8 @@ import (
 // separate from the streaming session (which lives only while someone is
 // watching) and from the proxy sessions. It is used for:
 //   - event notifications (motion sensor, doorbell, light state...)
+//   - the motion state of the stream (streams.SetMotion), from the first
+//     MotionDetected value at connect and every later value
 //   - reading and writing any characteristic via the API
 //
 // Config:
@@ -83,40 +85,6 @@ type watcher struct {
 }
 
 var watchers = map[string]*watcher{}
-
-var listenersMu sync.Mutex
-var listeners []func(Event)
-
-// AddEventListener registers a callback for events from all watched cameras.
-// The callback must not block.
-func AddEventListener(f func(Event)) {
-	listenersMu.Lock()
-	listeners = append(listeners, f)
-	listenersMu.Unlock()
-}
-
-// HasWatcher reports if the stream has events from a HomeKit camera.
-func HasWatcher(stream string) bool {
-	return watchers[stream] != nil
-}
-
-// Motion returns the latest state of the first motion sensor of the stream.
-func Motion(stream string) (motion, ok bool) {
-	w := watchers[stream]
-	if w == nil {
-		return false, false
-	}
-
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	for _, char := range w.chars {
-		if char.Type == TypeMotionDetected {
-			return toBool(char.Value), true
-		}
-	}
-	return false, false
-}
 
 // normValue - accessories report bool as true/false or 1/0, and a client
 // can write any of them
@@ -262,6 +230,14 @@ func (w *watcher) session() error {
 	w.index = index
 	w.mu.Unlock()
 
+	// the current motion state, events report only later changes
+	for _, info := range chars {
+		if info.Type == TypeMotionDetected && info.Value != nil {
+			streams.SetMotion(w.stream, toBool(info.Value))
+			break
+		}
+	}
+
 	defer func() {
 		w.mu.Lock()
 		w.client = nil
@@ -320,7 +296,8 @@ func (w *watcher) do(client *hap.Client, f func() error) error {
 	}
 }
 
-// update the cache and fire listeners if the value has changed.
+// update the cache, the motion state of the stream and post the webhook
+// if the value has changed.
 func (w *watcher) update(aid, iid uint64, value any, notify bool) {
 	w.mu.Lock()
 	info := w.index[[2]uint64{aid, iid}]
@@ -334,18 +311,17 @@ func (w *watcher) update(aid, iid uint64, value any, notify bool) {
 	event := Event{Stream: w.stream, AID: aid, IID: iid, Type: info.Type, Service: info.Service, Value: value}
 	w.mu.Unlock()
 
+	// the motion state ignores repeated values, so every read value can go there
+	if event.Type == TypeMotionDetected {
+		streams.SetMotion(w.stream, toBool(value))
+	}
+
 	if !changed || !notify {
 		return
 	}
 
 	log.Debug().Str("stream", w.stream).Uint64("iid", iid).Str("type", event.Type).
 		Msgf("[homekit] event value=%v", value)
-
-	listenersMu.Lock()
-	for _, f := range listeners {
-		f(event)
-	}
-	listenersMu.Unlock()
 
 	if w.webhook != "" {
 		go postWebhook(w.webhook, event)
