@@ -110,3 +110,71 @@ func TestManagementListener(t *testing.T) {
 	require.False(t, loopbackListener("localhost:1985"))
 	require.False(t, loopbackListener("127.0.0.1:0"))
 }
+
+func TestMotionAPIManagementOnly(t *testing.T) {
+	const (
+		unvr   = "192.0.2.40:50000"
+		ha     = "198.51.100.18:50000"
+		local  = "127.0.0.1:50000"
+		bearer = "Bearer bridge-token"
+		admin  = "Basic YWRtaW46cGFzcw=="
+	)
+	AllowToken("/api/homekit/characteristics", "bridge-token")
+	t.Cleanup(func() {
+		tokensMu.Lock()
+		delete(tokens, "/api/homekit/characteristics")
+		tokensMu.Unlock()
+	})
+
+	peers := protocolPeers{ONVIF: []string{"192.0.2.40"}}
+	peers.HomeKitControl.Peer = "198.51.100.18"
+	peers.HomeKitControl.Stream = "eve"
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/motion", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	protocol, err := protocolHandler(peers, mux)
+	require.NoError(t, err)
+	management := managementHandler("admin", "pass", mux)
+
+	for _, tc := range []struct {
+		name, method, path, peer, authorization string
+		want                                    int
+	}{
+		{"ONVIF peer sets motion", "POST", "/api/motion?src=eve", unvr, "", 404},
+		{"ONVIF peer clears motion", "DELETE", "/api/motion?src=eve", unvr, "", 404},
+		{"ONVIF peer reads motion", "GET", "/api/motion", unvr, "", 404},
+		{"HA token on motion", "POST", "/api/motion?src=eve", ha, bearer, 404},
+		{"admin credentials on protocol port", "POST", "/api/motion?src=eve", local, admin, 404},
+	} {
+		t.Run("protocol "+tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, "http://bridge:1984"+tc.path, nil)
+			req.RemoteAddr = tc.peer
+			req.Header.Set("Authorization", tc.authorization)
+			rec := httptest.NewRecorder()
+			protocol.ServeHTTP(rec, req)
+			require.Equal(t, tc.want, rec.Code)
+		})
+	}
+
+	for _, tc := range []struct {
+		name, method, authorization string
+		want                        int
+	}{
+		{"sets motion", "POST", admin, 204},
+		{"clears motion", "DELETE", admin, 204},
+		{"reads motion", "GET", admin, 204},
+		{"without credentials", "POST", "", 401},
+		{"with the HomeKit token", "POST", bearer, 401},
+	} {
+		t.Run("management "+tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(tc.method, "http://127.0.0.1:1985/api/motion?src=eve", nil)
+			req.RemoteAddr = local
+			req.Header.Set("Authorization", tc.authorization)
+			rec := httptest.NewRecorder()
+			management.ServeHTTP(rec, req)
+			require.Equal(t, tc.want, rec.Code)
+		})
+	}
+}
