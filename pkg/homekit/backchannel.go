@@ -51,13 +51,6 @@ func talkMedia(encoder bool) *core.Media {
 	return media
 }
 
-func (c *Client) GetTrack(media *core.Media, codec *core.Codec) (*core.Receiver, error) {
-	if media.Direction == core.DirectionSendonly {
-		return nil, core.ErrCantGetTrack
-	}
-	return c.Connection.GetTrack(media, codec)
-}
-
 func (c *Client) AddTrack(media *core.Media, _ *core.Codec, track *core.Receiver) error {
 	if track.Codec.Name == core.CodecELD {
 		return c.addTalkPassthrough(media, track)

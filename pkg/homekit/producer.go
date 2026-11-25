@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/AlexxIT/go2rtc/pkg/core"
@@ -37,6 +38,16 @@ type Client struct {
 	talkMu  sync.Mutex
 	talkCmd *shell.Command
 
+	// state of the started stream, see late.go
+	lateMu     sync.Mutex
+	started    bool
+	selVideo   string // negotiated H264 profile-level-id, ex. 4D0028
+	selAudio   string // negotiated audio codec, ex. ELD/16000
+	videoTrack atomic.Pointer[core.Receiver]
+	audioTrack atomic.Pointer[core.Receiver]
+	restart    chan struct{}
+	restartOne sync.Once
+
 	MaxWidth  int `json:"-"`
 	MaxHeight int `json:"-"`
 	Bitrate   int `json:"-"` // in bits/s
@@ -57,8 +68,9 @@ func Dial(rawURL string, server *srtp.Server) (*Client, error) {
 			Source:     rawURL,
 			Transport:  conn,
 		},
-		hap:  conn,
-		srtp: server,
+		hap:     conn,
+		srtp:    server,
+		restart: make(chan struct{}),
 	}
 
 	return client, nil
@@ -145,10 +157,13 @@ func (c *Client) Start() error {
 		return c.startMJPEG()
 	}
 
+	c.lateMu.Lock()
 	videoTrack := c.trackByKind(core.KindVideo)
+	audioTrack := c.trackByKind(core.KindAudio)
+	c.lateMu.Unlock()
+
 	videoCodec := trackToVideo(videoTrack, &c.videoConfig.Codecs[0], c.MaxWidth, c.MaxHeight)
 
-	audioTrack := c.trackByKind(core.KindAudio)
 	audioCodec := trackToAudio(audioTrack, &c.audioConfig.Codecs[0])
 
 	videoSession := &srtp.Session{Local: c.srtpEndpoint()}
@@ -175,32 +190,46 @@ func (c *Client) Start() error {
 
 	deadline := time.NewTimer(core.ConnDeadline)
 
-	// Tracks are searched on each packet until found, because a consumer can
-	// ask for the video after the producer was started by an audio only
-	// consumer (and vice versa). The camera always sends both.
+	// The camera always sends video and audio with the codecs selected above.
+	// A track that a consumer asks for later is attached only if it has the
+	// same codec, otherwise the producer restarts (see late.go).
+	c.lateMu.Lock()
+	c.selVideo = videoSelection(videoCodec)
+	c.selAudio = audioSelection(audioCodec)
+	c.videoTrack.Store(videoTrack)
+	c.audioTrack.Store(audioTrack)
+	c.started = true
+	// tracks added while the stream was starting
+	for _, receiver := range c.Receivers {
+		if receiver != videoTrack && receiver != audioTrack {
+			c.attachLate(receiver)
+		}
+	}
+	restart := c.restart
+	c.lateMu.Unlock()
+
 	c.videoSession.OnReadRTP = func(packet *rtp.Packet) {
 		deadline.Reset(core.ConnDeadline)
-		if videoTrack == nil {
-			if videoTrack = c.trackByKind(core.KindVideo); videoTrack == nil {
-				return
-			}
+		if track := c.videoTrack.Load(); track != nil {
+			track.WriteRTP(packet)
+			c.Recv += len(packet.Payload)
 		}
-		videoTrack.WriteRTP(packet)
-		c.Recv += len(packet.Payload)
 	}
 
 	c.audioSession.OnReadRTP = timekeeper(func(packet *rtp.Packet) {
 		deadline.Reset(core.ConnDeadline)
-		if audioTrack == nil {
-			if audioTrack = c.trackByKind(core.KindAudio); audioTrack == nil {
-				return
-			}
+		if track := c.audioTrack.Load(); track != nil {
+			track.WriteRTP(packet)
+			c.Recv += len(packet.Payload)
 		}
-		audioTrack.WriteRTP(packet)
-		c.Recv += len(packet.Payload)
 	})
 
-	<-deadline.C
+	select {
+	case <-deadline.C:
+	case <-restart:
+		// free the stream of the camera for the next connection
+		_ = c.stream.Close()
+	}
 
 	return nil
 }
